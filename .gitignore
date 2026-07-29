@@ -1,0 +1,10 @@
+# Local planning document, not part of the published project
+IMPLEMENTATION_PLAN.md
+
+venv/
+qdrant_db/
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+models_cache/

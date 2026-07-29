@@ -1,0 +1,25 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  rag-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - QDRANT_MODE=server
+      - QDRANT_URL=http://qdrant:6333
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - VAULT_PATH=/vault
+    volumes:
+      # Mount your notes read-only so the indexer can reach them.
+      - "${VAULT_PATH}:/vault:ro"
+    depends_on:
+      - qdrant
+
+volumes:
+  qdrant_storage:
