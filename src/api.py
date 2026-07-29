@@ -46,6 +46,9 @@ class AskResponse(BaseModel):
 @app.get("/health")
 def health():
     client = get_qdrant_client()
+    if not client.collection_exists(COLLECTION_NAME):
+        return {"status": "empty", "collection": COLLECTION_NAME, "points": 0,
+                "hint": "run: python -m src.indexer"}
     count = client.count(COLLECTION_NAME).count
     return {"status": "ok", "collection": COLLECTION_NAME, "points": count}
 
