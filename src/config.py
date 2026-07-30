@@ -5,6 +5,7 @@ runs in local mode (embedded Qdrant) and server mode (Docker).
 """
 
 import os
+from functools import lru_cache
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -82,8 +83,13 @@ def ensure_vault_available() -> None:
         )
 
 
+@lru_cache(maxsize=1)
 def get_qdrant_client():
-    """Return a QdrantClient for the configured mode."""
+    """Return the process-wide QdrantClient.
+
+    Cached because local-mode Qdrant holds an exclusive storage lock; a
+    second instance in the same process would fail to acquire it.
+    """
     from qdrant_client import QdrantClient
 
     if QDRANT_MODE == "server":
