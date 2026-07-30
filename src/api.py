@@ -21,7 +21,16 @@ app = FastAPI(
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
-    category: str | None = None
+    category: str | None = Field(
+        default=None,
+        description="Optional filter: first-level folder name, e.g. 工作. Omit to search everything.",
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{"query": "社保要注意什么", "top_k": 5}]
+        }
+    }
 
 
 class SearchHit(BaseModel):
@@ -35,7 +44,16 @@ class SearchHit(BaseModel):
 class AskRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
-    category: str | None = None
+    category: str | None = Field(
+        default=None,
+        description="Optional filter: first-level folder name, e.g. 工作. Omit to search everything.",
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{"query": "换了雇主社保要注意什么", "top_k": 5}]
+        }
+    }
 
 
 class AskResponse(BaseModel):
