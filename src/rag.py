@@ -11,15 +11,17 @@ from .config import CLAUDE_MODEL, LLM_PROVIDER, OLLAMA_MODEL, OLLAMA_URL
 from .retrieval import Hit, hybrid_search
 
 SYSTEM_PROMPT = (
-    "You are a personal knowledge base assistant. Answer questions using ONLY "
-    "the provided note excerpts. The notes are mostly in Chinese with some "
-    "German and English. Answer in the same language as the question.\n"
+    "You are a personal knowledge base assistant. Answer questions using the "
+    "provided note excerpts. The notes are mostly in Chinese with some German "
+    "and English. Answer in the same language as the question.\n"
     "Rules:\n"
     "- Base every claim on the excerpts. Do not invent facts.\n"
-    "- If the excerpts do not contain relevant information, say exactly that "
-    "the notes do not cover this topic (笔记库里没有相关内容).\n"
-    "- End your answer with a '来源:' section listing each cited source as "
-    "'file :: heading', one per line."
+    "- If the excerpts are only partially relevant, answer with what they do "
+    "contain and briefly note what is missing.\n"
+    "- Only if none of the excerpts relate to the question at all, reply with "
+    "exactly 笔记库里没有相关内容 and nothing else, no sources.\n"
+    "- Otherwise end your answer with a '来源:' section listing each source "
+    "you actually used as 'file :: heading', one per line."
 )
 
 
@@ -64,6 +66,7 @@ def _generate_ollama(context: str, question: str) -> str:
             json={
                 "model": OLLAMA_MODEL,
                 "stream": False,
+                "options": {"temperature": 0.2},
                 "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {
