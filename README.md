@@ -87,6 +87,24 @@ Measured example from this vault, query `"Riester 值得买吗"` (a German pensi
 
 With dense vectors alone, an irrelevant hiking note scores within 0.0001 of a correct hit, so a slightly different query flips the ranking. The BM25 leg matches the literal token "Riester" and the fusion separates the correct chunks decisively.
 
+## Scaling case study: 371 to 49,460 chunks
+
+To test the stack beyond a personal vault, a second pipeline (`pipelines/wikivoyage/`) indexes the German Wikivoyage dump: 20,968 articles streamed from the official XML export, cleaned from wikitext to markdown (POI templates rendered as text, section headings preserved), filtered to the 3,873 Germany articles via the IstIn breadcrumb graph, and embedded into a separate collection of 49,460 chunks.
+
+```bash
+python -m pipelines.wikivoyage.parse            # dump -> articles.jsonl
+python -m pipelines.wikivoyage.build --scope germany
+QDRANT_COLLECTION=wikivoyage uvicorn src.api:app --port 8000
+```
+
+Lessons that only showed up at this scale, all reproducible in the git history:
+
+- A 64-text benchmark predicted 3.5 chunks/s; production ran at 0.6. Mixed-length batches pad every text to the longest member, and sustained load throttles a laptop CPU in ways a short benchmark never sees. Length-sorted batching plus a 512-token cap roughly doubled real throughput.
+- A 6-hour job needs to survive interruption. Upserts happen per article batch, so a resumed run skips completed articles by comparing stored file hashes; transient disk errors (external USB drive) are retried with backoff instead of killing the run.
+- Query latency on 49k chunks is ~1.2s in embedded local mode, which does exact brute-force search. That is the point where switching to the Docker Qdrant server (HNSW index) stops being over-engineering, which is why both modes exist behind one config switch.
+
+Cross-language retrieval works out of the box: a Chinese query like "哪里可以坐蒸汽火车上山" (where can I take a steam train up a mountain) retrieves German articles about mountain railways, because bge-m3 embeds both languages into one space.
+
 ## Tech
 
 | Component | Choice |
