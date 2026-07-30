@@ -38,7 +38,7 @@ QDRANT_MODE = os.environ.get("QDRANT_MODE", "local")  # local | server
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 QDRANT_PATH = Path(os.environ.get("QDRANT_PATH", PROJECT_ROOT / "qdrant_db"))
 
-COLLECTION_NAME = "vault"
+COLLECTION_NAME = os.environ.get("QDRANT_COLLECTION", "vault")
 
 # Embedding models
 DENSE_MODEL = "BAAI/bge-m3"            # multilingual (zh/de/en), 1024-dim

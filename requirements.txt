@@ -5,3 +5,4 @@ uvicorn>=0.30
 anthropic>=0.40
 prefect>=3.0
 pytest>=8.0
+mwparserfromhell>=0.6

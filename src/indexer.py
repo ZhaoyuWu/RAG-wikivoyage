@@ -51,10 +51,10 @@ def load_chunks(root: Path) -> tuple[list[Chunk], int]:
     return all_chunks, file_count
 
 
-def ensure_collection(client) -> None:
-    if not client.collection_exists(COLLECTION_NAME):
+def ensure_collection(client, collection: str = COLLECTION_NAME) -> None:
+    if not client.collection_exists(collection):
         client.create_collection(
-            collection_name=COLLECTION_NAME,
+            collection_name=collection,
             vectors_config={
                 "dense": models.VectorParams(size=DENSE_DIM, distance=models.Distance.COSINE),
             },
@@ -63,30 +63,33 @@ def ensure_collection(client) -> None:
             },
         )
         client.create_payload_index(
-            COLLECTION_NAME, field_name="file", field_schema=models.PayloadSchemaType.KEYWORD
+            collection, field_name="file", field_schema=models.PayloadSchemaType.KEYWORD
         )
         client.create_payload_index(
-            COLLECTION_NAME, field_name="category", field_schema=models.PayloadSchemaType.KEYWORD
+            collection, field_name="category", field_schema=models.PayloadSchemaType.KEYWORD
         )
 
 
-def embed_and_upsert(client, chunks: list[Chunk], batch_size: int = 16) -> None:
-    """Compute dense + sparse vectors and upsert points in batches."""
+def load_embedders():
+    """Load the dense and sparse embedding models once."""
     from fastembed import SparseTextEmbedding
     from sentence_transformers import SentenceTransformer
 
     print(f"Loading dense model {DENSE_MODEL} (first run downloads ~2.3GB)...")
-    dense_model = SentenceTransformer(DENSE_MODEL)
-    sparse_model = SparseTextEmbedding(SPARSE_MODEL)
+    return SentenceTransformer(DENSE_MODEL), SparseTextEmbedding(SPARSE_MODEL)
 
-    total = len(chunks)
-    for start in range(0, total, batch_size):
+
+def embed_points(
+    chunks: list[Chunk], dense_model, sparse_model, batch_size: int = 32
+) -> list[models.PointStruct]:
+    """Compute dense + sparse vectors for chunks and build Qdrant points."""
+    points: list[models.PointStruct] = []
+    for start in range(0, len(chunks), batch_size):
         batch = chunks[start : start + batch_size]
         texts = [f"{c.heading}\n{c.text}" for c in batch]
         dense_vecs = dense_model.encode(texts, normalize_embeddings=True)
         sparse_vecs = list(sparse_model.embed(texts))
-
-        points = [
+        points.extend(
             models.PointStruct(
                 id=chunk.id,
                 vector={
@@ -106,8 +109,23 @@ def embed_and_upsert(client, chunks: list[Chunk], batch_size: int = 16) -> None:
                 },
             )
             for chunk, dense_vec, sparse_vec in zip(batch, dense_vecs, sparse_vecs)
-        ]
-        client.upsert(collection_name=COLLECTION_NAME, points=points)
+        )
+    return points
+
+
+def embed_and_upsert(
+    client,
+    chunks: list[Chunk],
+    batch_size: int = 16,
+    collection: str = COLLECTION_NAME,
+) -> None:
+    """Compute vectors and upsert points in batches, with progress output."""
+    dense_model, sparse_model = load_embedders()
+    total = len(chunks)
+    for start in range(0, total, batch_size):
+        batch = chunks[start : start + batch_size]
+        points = embed_points(batch, dense_model, sparse_model, batch_size)
+        client.upsert(collection_name=collection, points=points)
         print(f"  indexed {min(start + batch_size, total)}/{total} chunks", flush=True)
 
 
