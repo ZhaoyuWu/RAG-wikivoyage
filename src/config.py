@@ -50,8 +50,12 @@ USE_RERANKER = os.environ.get("USE_RERANKER", "0") == "1"
 MIN_CHUNK_CHARS = 80
 MAX_CHUNK_CHARS = 1500
 
-# Generation
+# Generation. Provider "anthropic" needs ANTHROPIC_API_KEY; "ollama" runs
+# fully offline against a local Ollama server.
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic")  # anthropic | ollama
 CLAUDE_MODEL = "claude-sonnet-5"
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b-instruct")
 
 
 def utf8_stdout() -> None:

@@ -97,7 +97,7 @@ With dense vectors alone, an irrelevant hiking note scores within 0.0001 of a co
 | Fusion | Qdrant Query API prefetch + RRF |
 | Reranker (optional) | BAAI/bge-reranker-v2-m3 cross-encoder |
 | API | FastAPI + pydantic v2 |
-| Generation | Claude API (claude-sonnet-5) |
+| Generation | Claude API (claude-sonnet-5) or local Ollama model, switch via LLM_PROVIDER |
 | Orchestration | Prefect |
 
 ## Privacy
