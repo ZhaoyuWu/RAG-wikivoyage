@@ -109,21 +109,49 @@ def build(scope: str, limit: int | None) -> None:
 
     dense_model, sparse_model = load_embedders()
     chunk_count = 0
-    for i, (a, file_hash) in enumerate(todo, 1):
+    done_articles = 0
+    buffer: list = []  # chunks of complete articles awaiting embedding
+
+    def upsert_with_retry(points, attempts: int = 5) -> None:
+        """Ride out transient disk hiccups (external USB drive)."""
+        for attempt in range(1, attempts + 1):
+            try:
+                client.upsert(collection_name=COLLECTION, points=points)
+                return
+            except Exception as e:
+                if attempt == attempts:
+                    raise
+                wait = 10 * attempt
+                print(f"  upsert failed ({e}), retry {attempt}/{attempts - 1} "
+                      f"in {wait}s", flush=True)
+                time.sleep(wait)
+
+    def flush() -> None:
+        nonlocal chunk_count
+        if not buffer:
+            return
+        points = embed_points(buffer, dense_model, sparse_model, batch_size=64)
+        upsert_with_retry(points)
+        chunk_count += len(buffer)
+        buffer.clear()
+        elapsed = (time.time() - started) / 60
+        rate = done_articles / elapsed if elapsed else 0
+        eta = (len(todo) - done_articles) / rate if rate else 0
+        print(f"  {done_articles}/{len(todo)} articles, {chunk_count} chunks, "
+              f"{elapsed:.0f} min elapsed, ~{eta:.0f} min left", flush=True)
+
+    # Articles are buffered whole and flushed together, so every title in the
+    # collection is complete and the resume check stays valid.
+    for a, file_hash in todo:
         md = to_markdown(a["wikitext"])
+        done_articles += 1
         if len(md) < 200:  # skip stubs
             continue
         parent = extract_parent(a["wikitext"]) or "(none)"
-        chunks = chunk_markdown(md, a["title"], parent, file_hash)
-        points = embed_points(chunks, dense_model, sparse_model)
-        client.upsert(collection_name=COLLECTION, points=points)
-        chunk_count += len(chunks)
-        if i % 25 == 0 or i == len(todo):
-            elapsed = (time.time() - started) / 60
-            rate = i / elapsed if elapsed else 0
-            eta = (len(todo) - i) / rate if rate else 0
-            print(f"  {i}/{len(todo)} articles, {chunk_count} chunks, "
-                  f"{elapsed:.0f} min elapsed, ~{eta:.0f} min left", flush=True)
+        buffer.extend(chunk_markdown(md, a["title"], parent, file_hash))
+        if len(buffer) >= 256:
+            flush()
+    flush()
 
     count = client.count(COLLECTION).count
     print(f"Done in {(time.time() - started) / 60:.1f} min. "

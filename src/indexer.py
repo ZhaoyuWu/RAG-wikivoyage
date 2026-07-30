@@ -76,13 +76,22 @@ def load_embedders():
     from sentence_transformers import SentenceTransformer
 
     print(f"Loading dense model {DENSE_MODEL} (first run downloads ~2.3GB)...")
-    return SentenceTransformer(DENSE_MODEL), SparseTextEmbedding(SPARSE_MODEL)
+    dense = SentenceTransformer(DENSE_MODEL)
+    # Chunks are capped at 1500 chars (~450 tokens); 512 keeps headroom while
+    # bounding the quadratic attention cost of stray long inputs.
+    dense.max_seq_length = 512
+    return dense, SparseTextEmbedding(SPARSE_MODEL)
 
 
 def embed_points(
     chunks: list[Chunk], dense_model, sparse_model, batch_size: int = 32
 ) -> list[models.PointStruct]:
-    """Compute dense + sparse vectors for chunks and build Qdrant points."""
+    """Compute dense + sparse vectors for chunks and build Qdrant points.
+
+    Chunks are embedded in length-sorted order so a batch pads only to the
+    longest member of similar-length texts instead of the global maximum.
+    """
+    chunks = sorted(chunks, key=lambda c: len(c.text))
     points: list[models.PointStruct] = []
     for start in range(0, len(chunks), batch_size):
         batch = chunks[start : start + batch_size]
