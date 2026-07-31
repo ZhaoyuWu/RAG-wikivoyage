@@ -10,3 +10,4 @@ __pycache__/
 models_cache/
 .claude/
 data/
+.playwright-mcp/
