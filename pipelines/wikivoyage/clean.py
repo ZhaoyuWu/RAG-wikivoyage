@@ -36,6 +36,43 @@ def _render_vcard(tpl) -> str:
     return "- " + ", ".join(parts) if parts else ""
 
 
+def extract_pois(wikitext: str) -> list[dict]:
+    """Extract named coordinates from vCard/Marker templates.
+
+    Returns [{"name": ..., "lat": ..., "lon": ...}] for every template that
+    carries usable coordinates.
+    """
+    pois: list[dict] = []
+    code = mwparserfromhell.parse(wikitext)
+    for tpl in code.filter_templates(recursive=True):
+        tpl_name = str(tpl.name).strip().lower()
+        if tpl_name not in ("vcard", "marker"):
+            continue
+        try:
+            name = str(tpl.get("name").value).strip() if tpl.has("name") else ""
+            lat_param = "lat" if tpl.has("lat") else None
+            lon_param = "long" if tpl.has("long") else ("lon" if tpl.has("lon") else None)
+            if not (name and lat_param and lon_param):
+                continue
+            lat = float(str(tpl.get(lat_param).value).strip())
+            lon = float(str(tpl.get(lon_param).value).strip())
+        except (ValueError, AttributeError):
+            continue
+        if -90 <= lat <= 90 and -180 <= lon <= 180:
+            pois.append({"name": name, "lat": lat, "lon": lon})
+    return pois
+
+
+def centroid(pois: list[dict]) -> dict | None:
+    """Median coordinate of the article's POIs, robust against outliers."""
+    if not pois:
+        return None
+    lats = sorted(p["lat"] for p in pois)
+    lons = sorted(p["lon"] for p in pois)
+    mid = len(pois) // 2
+    return {"lat": lats[mid], "lon": lons[mid]}
+
+
 _H2_SENTINEL = "XH2MARKERX"
 
 

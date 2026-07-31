@@ -28,6 +28,8 @@ class Hit:
     heading: str
     text: str
     category: str
+    geo: dict | None = None
+    pois: list | None = None
 
 
 @lru_cache(maxsize=1)
@@ -56,12 +58,24 @@ def _client():
     return get_qdrant_client()
 
 
-def _category_filter(category: str | None) -> models.Filter | None:
-    if not category:
-        return None
-    return models.Filter(
-        must=[models.FieldCondition(key="category", match=models.MatchValue(value=category))]
-    )
+def _build_filter(category: str | None, geo: dict | None) -> models.Filter | None:
+    """Combine optional category and geo-radius conditions."""
+    must: list = []
+    if category:
+        must.append(
+            models.FieldCondition(key="category", match=models.MatchValue(value=category))
+        )
+    if geo:
+        must.append(
+            models.FieldCondition(
+                key="geo",
+                geo_radius=models.GeoRadius(
+                    center=models.GeoPoint(lat=geo["lat"], lon=geo["lon"]),
+                    radius=geo.get("radius_km", 50) * 1000,
+                ),
+            )
+        )
+    return models.Filter(must=must) if must else None
 
 
 def _to_hits(points) -> list[Hit]:
@@ -72,6 +86,8 @@ def _to_hits(points) -> list[Hit]:
             heading=p.payload["heading"],
             text=p.payload["text"],
             category=p.payload["category"],
+            geo=p.payload.get("geo"),
+            pois=p.payload.get("pois"),
         )
         for p in points
     ]
@@ -82,6 +98,7 @@ def dense_search(
     top_k: int = 5,
     category: str | None = None,
     collection: str | None = None,
+    geo: dict | None = None,
 ) -> list[Hit]:
     """Dense-only search, used as the baseline for hybrid comparison."""
     dense_vec = _dense_model().encode(query, normalize_embeddings=True).tolist()
@@ -89,7 +106,7 @@ def dense_search(
         collection_name=collection or COLLECTION_NAME,
         query=dense_vec,
         using="dense",
-        query_filter=_category_filter(category),
+        query_filter=_build_filter(category, geo),
         limit=top_k,
         with_payload=True,
     )
@@ -102,6 +119,7 @@ def hybrid_search(
     category: str | None = None,
     rerank: bool | None = None,
     collection: str | None = None,
+    geo: dict | None = None,
 ) -> list[Hit]:
     """Prefetch dense and sparse candidates, fuse with RRF, optionally rerank."""
     if rerank is None:
@@ -113,14 +131,15 @@ def hybrid_search(
         indices=sparse_raw.indices.tolist(), values=sparse_raw.values.tolist()
     )
 
+    query_filter = _build_filter(category, geo)
     fetch_k = 20 if rerank else top_k
     result = _client().query_points(
         collection_name=collection or COLLECTION_NAME,
         prefetch=[
             models.Prefetch(query=dense_vec, using="dense", limit=20,
-                            filter=_category_filter(category)),
+                            filter=query_filter),
             models.Prefetch(query=sparse_vec, using="sparse", limit=20,
-                            filter=_category_filter(category)),
+                            filter=query_filter),
         ],
         query=models.FusionQuery(fusion=models.Fusion.RRF),
         limit=fetch_k,

@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vault RAG</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root {
     --bg: #f6f7f9; --card: #ffffff; --text: #1c2330; --muted: #67707f;
@@ -68,6 +70,18 @@
     padding: .4rem 0; user-select: none;
   }
   .trace summary:hover { color: var(--accent); }
+  #map {
+    height: 340px; border-radius: 10px; border: 1px solid var(--border);
+    margin-bottom: .8rem; display: none;
+  }
+  #geobtn.active { background: var(--accent-soft); color: var(--accent); }
+  #geobtn, #radius {
+    background: var(--card); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: .55rem .75rem; font-size: .9rem; cursor: pointer;
+  }
+  #radius { display: none; }
+  .opt { display: flex; gap: .8rem; align-items: baseline; }
+  .opt .dur { font-weight: 700; color: var(--accent); white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -79,19 +93,87 @@
     <span class="modes">
       <label><input type="radio" name="mode" value="search" checked><span>Search</span></label>
       <label><input type="radio" name="mode" value="ask"><span>Ask</span></label>
+      <label><input type="radio" name="mode" value="route"><span>Route</span></label>
     </span>
     <input type="text" id="category" placeholder="category (optional)" size="14">
+    <button id="geobtn" title="Filter results by map location">📍 near</button>
+    <select id="radius">
+      <option value="10">10 km</option>
+      <option value="25">25 km</option>
+      <option value="50" selected>50 km</option>
+      <option value="100">100 km</option>
+    </select>
   </div>
-  <div class="bar">
+  <div class="bar" id="searchbar">
     <input type="text" id="query" placeholder="Type a question and press Enter" autofocus>
     <button id="go">Go</button>
   </div>
+  <div class="bar" id="routebar" style="display:none">
+    <input type="text" id="from" placeholder="From (e.g. Essen)" size="16">
+    <input type="text" id="to" placeholder="To (e.g. Goslar)" size="16">
+    <select id="rmode">
+      <option value="transit">🚆 Train</option>
+      <option value="car">🚗 Drive</option>
+    </select>
+    <button id="goroute">Go</button>
+  </div>
 
+  <div id="map"></div>
   <div id="status"></div>
   <div id="results"></div>
 
 <script>
 const $ = id => document.getElementById(id);
+
+// ---- Map ----
+let map = null, poiLayer = null, geoLayer = null, routeLayer = null;
+let geoFilter = null, picking = false;
+
+function ensureMap() {
+  $("map").style.display = "block";
+  if (!map) {
+    map = L.map("map").setView([51.16, 10.45], 6);  // Germany
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap contributors",
+    }).addTo(map);
+    poiLayer = L.layerGroup().addTo(map);
+    geoLayer = L.layerGroup().addTo(map);
+    routeLayer = L.layerGroup().addTo(map);
+    map.on("click", e => {
+      if (!picking) return;
+      geoFilter = { lat: e.latlng.lat, lon: e.latlng.lng,
+                    radius_km: parseFloat($("radius").value) };
+      drawGeoFilter();
+      status(`Location filter set (${geoFilter.radius_km} km radius). Run a search.`);
+    });
+  }
+  setTimeout(() => map.invalidateSize(), 50);
+}
+
+function drawGeoFilter() {
+  geoLayer.clearLayers();
+  if (!geoFilter) return;
+  L.circle([geoFilter.lat, geoFilter.lon], { radius: geoFilter.radius_km * 1000,
+    color: "#2563eb", weight: 1.5, fillOpacity: 0.06 }).addTo(geoLayer);
+  L.marker([geoFilter.lat, geoFilter.lon]).addTo(geoLayer);
+}
+
+function plotHits(hits) {
+  const seen = new Set();
+  const markers = [];
+  hits.forEach(h => (h.pois || []).forEach(p => {
+    if (seen.has(p.name)) return;
+    seen.add(p.name);
+    markers.push(L.marker([p.lat, p.lon])
+      .bindPopup(`<b>${esc(p.name)}</b><br><small>${esc(h.file)}</small>`));
+  }));
+  if (!markers.length) return;
+  ensureMap();
+  poiLayer.clearLayers();
+  markers.forEach(m => m.addTo(poiLayer));
+  const group = L.featureGroup(markers);
+  map.fitBounds(group.getBounds().pad(0.2), { maxZoom: 12 });
+}
 const status = (msg, isErr = false) => {
   $("status").innerHTML = msg;
   $("status").className = isErr ? "error" : "";
@@ -119,6 +201,48 @@ function renderHits(hits) {
       </div>
       <p>${esc(h.text)}</p>
     </div>`).join("");
+  plotHits(hits);
+}
+
+async function runRoute() {
+  const from_place = $("from").value.trim();
+  const to_place = $("to").value.trim();
+  if (!from_place || !to_place) { status("Enter both places.", true); return; }
+  status(`<span class="spin"></span>Routing…`);
+  $("results").innerHTML = "";
+  const resp = await fetch("/route", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ from_place, to_place, mode: $("rmode").value }),
+  });
+  const d = await resp.json();
+  if (!resp.ok) throw new Error(d.detail || resp.statusText);
+
+  $("results").innerHTML = d.options.map(o => `
+    <div class="card">
+      <div class="opt">
+        <span class="dur">${Math.floor(o.duration_min / 60)}h ${o.duration_min % 60}m</span>
+        <span>${esc(o.summary)}</span>
+        ${o.transfers ? `<span class="src">${o.transfers} transfer(s)</span>` : ""}
+      </div>
+      ${(o.legs || []).map(l =>
+        `<div class="src">• ${esc(l.line)}: ${esc(l.from)} → ${esc(l.to)}</div>`).join("")}
+    </div>`).join("");
+
+  ensureMap();
+  routeLayer.clearLayers();
+  poiLayer.clearLayers();
+  const a = L.marker([d.from.lat, d.from.lon]).bindPopup(esc(d.from.name));
+  const b = L.marker([d.to.lat, d.to.lon]).bindPopup(esc(d.to.name));
+  a.addTo(routeLayer); b.addTo(routeLayer);
+  if (d.geometry) {
+    L.geoJSON(d.geometry, { style: { color: "#2563eb", weight: 4 } }).addTo(routeLayer);
+  } else {
+    L.polyline([[d.from.lat, d.from.lon], [d.to.lat, d.to.lon]],
+      { color: "#2563eb", weight: 2, dashArray: "6 8" }).addTo(routeLayer);
+  }
+  map.fitBounds(L.featureGroup([a, b]).getBounds().pad(0.25));
+  status(`${d.from.name} → ${d.to.name}, ${d.options.length} option(s)`);
 }
 
 function traceSummaryLine(t) {
@@ -202,14 +326,22 @@ async function runAskStream(body, t0) {
 }
 
 async function run() {
+  const mode = document.querySelector("input[name=mode]:checked").value;
+  if (mode === "route") {
+    $("go").disabled = true;
+    try { await runRoute(); }
+    catch (e) { status("Error: " + esc(e.message), true); }
+    finally { $("go").disabled = false; }
+    return;
+  }
   const query = $("query").value.trim();
   if (!query) return;
-  const mode = document.querySelector("input[name=mode]:checked").value;
   const body = {
     query,
     top_k: 5,
     collection: $("collection").value || null,
     category: $("category").value.trim() || null,
+    geo: geoFilter,
   };
   $("go").disabled = true;
   $("results").innerHTML = "";
@@ -237,7 +369,40 @@ async function run() {
 }
 
 $("go").onclick = run;
+$("goroute").onclick = () => run();
 $("query").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+$("to").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+
+document.querySelectorAll("input[name=mode]").forEach(r =>
+  r.addEventListener("change", () => {
+    const isRoute = r.value === "route" && r.checked;
+    $("searchbar").style.display = isRoute ? "none" : "flex";
+    $("routebar").style.display = isRoute ? "flex" : "none";
+    if (isRoute) ensureMap();
+  }));
+
+$("geobtn").onclick = () => {
+  if (geoFilter || picking) {           // clear
+    geoFilter = null; picking = false;
+    $("geobtn").classList.remove("active");
+    $("radius").style.display = "none";
+    if (geoLayer) geoLayer.clearLayers();
+    status("Location filter cleared.");
+  } else {                              // arm picking
+    picking = true;
+    $("geobtn").classList.add("active");
+    $("radius").style.display = "";
+    ensureMap();
+    status("Click the map to set the search center.");
+  }
+};
+$("radius").onchange = () => {
+  if (geoFilter) {
+    geoFilter.radius_km = parseFloat($("radius").value);
+    drawGeoFilter();
+  }
+};
+
 loadCollections();
 </script>
 </body>

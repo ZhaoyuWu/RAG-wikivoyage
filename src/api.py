@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from .config import COLLECTION_NAME, get_qdrant_client
 from .rag import ask, ask_stream
 from .retrieval import hybrid_search
+from .routing import route
 
 app = FastAPI(
     title="Vault RAG",
@@ -32,6 +33,12 @@ def _check_collection(collection: str | None) -> None:
         raise HTTPException(status_code=404, detail=f"Unknown collection: {collection}")
 
 
+class GeoFilter(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    radius_km: float = Field(default=50, gt=0, le=1000)
+
+
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
@@ -42,6 +49,10 @@ class SearchRequest(BaseModel):
     collection: str | None = Field(
         default=None,
         description="Collection to query. Omit for the configured default.",
+    )
+    geo: GeoFilter | None = Field(
+        default=None,
+        description="Optional geo-radius filter, e.g. {lat: 51.45, lon: 7.01, radius_km: 50}.",
     )
 
     model_config = {
@@ -57,6 +68,8 @@ class SearchHit(BaseModel):
     heading: str
     text: str
     category: str
+    geo: dict | None = None
+    pois: list | None = None
 
 
 class AskRequest(BaseModel):
@@ -114,9 +127,37 @@ def health():
 def search(req: SearchRequest):
     _check_collection(req.collection)
     hits = hybrid_search(
-        req.query, top_k=req.top_k, category=req.category, collection=req.collection
+        req.query,
+        top_k=req.top_k,
+        category=req.category,
+        collection=req.collection,
+        geo=req.geo.model_dump() if req.geo else None,
     )
     return [SearchHit(**vars(h)) for h in hits]
+
+
+class RouteRequest(BaseModel):
+    from_place: str = Field(min_length=1, description="Start, e.g. Essen")
+    to_place: str = Field(min_length=1, description="Destination, e.g. Goslar")
+    mode: str = Field(default="transit", pattern="^(car|transit)$")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{"from_place": "Essen", "to_place": "Goslar", "mode": "transit"}]
+        }
+    }
+
+
+@app.post("/route")
+def route_endpoint(req: RouteRequest):
+    """Resolve A and B against the corpus gazetteer, then query a routing
+    backend: OSRM for driving, the DB REST API for rail."""
+    try:
+        return route(req.from_place, req.to_place, req.mode)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.post("/ask/stream")

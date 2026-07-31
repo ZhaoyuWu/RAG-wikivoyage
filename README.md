@@ -12,6 +12,8 @@ Built and tested on two corpora: a personal Obsidian vault (371 chunks) and the 
 - **Cross-language**: ask in Chinese or English over a German corpus. One embedding space for all languages.
 - **Grounded answers with citations**: the LLM answers only from retrieved chunks and lists its sources. When retrieval finds nothing relevant, it says so instead of guessing.
 - **Transparent pipeline**: every answer streams over SSE with a live trace. You watch the retrieved chunks appear, then the answer generate token by token, then the process panel collapses into an expandable "How this answer was made" summary with timings.
+- **Map aware**: 179k POI coordinates extracted from the corpus live in the payload. Results plot on a Leaflet map, and a geo-radius filter turns "castles in the Harz" from a semantic guess into a spatial guarantee.
+- **A-to-B routing**: train connections (real timetables) and driving routes with durations, using the corpus itself as the geocoder. Two independent free transit backends with automatic failover.
 - **Incremental indexing**: a Prefect flow compares file hashes and re-embeds only changed files.
 - **Two deployment modes**: embedded Qdrant on disk for zero-setup local use, or Docker Compose (Qdrant server + API) when the corpus outgrows brute-force search.
 
@@ -24,6 +26,20 @@ A single static page served by the API. Collection switcher, search and ask mode
 | ![Search results](assets/search-results.png) | ![Answer with citations](assets/ask-answer.png) |
 
 The second screenshot shows a Chinese question answered from German source articles, with the retrieval trace collapsed above the answer.
+
+## Map search and routing
+
+Wikivoyage articles carry coordinates in their POI templates (vCard/Marker). The pipeline extracts them into the chunk payload without re-embedding anything: each chunk gets its article centroid for geo-radius filtering plus the POIs mentioned in its own text for map pins. Qdrant filters by geo radius natively, combined with the hybrid retrieval in one query.
+
+![Geo-filtered search with POI pins](assets/map-search.png)
+
+Why it matters: the query "Burgen und Schlösser im Harz" without the filter happily returned castle chunks from the Rhine valley, 200 km away. Text similarity knows what a castle is, not where the Harz ends. The map filter makes location a hard constraint instead of a soft hint.
+
+The Route mode answers "how do I get from A to B and how long does it take". Place names resolve against the corpus itself (every geotagged article doubles as a gazetteer entry), then free public services do the actual routing: OSRM for driving, the DB REST API for rail with Transitous (MOTIS) as automatic fallback, because community APIs have outages and a demo that dies with its single upstream is not a demo.
+
+![Train routing Essen to Goslar](assets/route-transit.png)
+
+Boundary note: the AI pipeline (embedding, retrieval, generation) stays fully local. Map tiles and routing calls go to public services and carry only place names and coordinates, never corpus content.
 
 ## Architecture
 
