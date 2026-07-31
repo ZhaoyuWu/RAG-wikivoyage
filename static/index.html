@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vault RAG</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1c2330; --muted: #67707f;
+    --accent: #2563eb; --accent-soft: #dbeafe; --border: #e3e6eb; --err: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1b202a; --text: #e8ebf0; --muted: #8b94a3;
+      --accent: #60a5fa; --accent-soft: #1e3a5f; --border: #2a3140; --err: #f87171;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.6 system-ui, "Segoe UI", sans-serif;
+    max-width: 780px; margin: 0 auto; padding: 2rem 1rem 4rem;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: .2rem; }
+  .sub { color: var(--muted); font-size: .85rem; margin-bottom: 1.5rem; }
+  .bar { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: .75rem; }
+  select, input[type=text] {
+    background: var(--card); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: .55rem .75rem; font-size: .95rem;
+  }
+  #query { flex: 1; min-width: 220px; }
+  button {
+    background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+    padding: .55rem 1.2rem; font-size: .95rem; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: wait; }
+  .modes { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .modes label {
+    padding: .5rem .9rem; cursor: pointer; font-size: .9rem; color: var(--muted);
+    background: var(--card);
+  }
+  .modes input { display: none; }
+  .modes input:checked + span { color: var(--accent); font-weight: 600; }
+  .modes label:has(input:checked) { background: var(--accent-soft); }
+  #status { color: var(--muted); font-size: .9rem; margin: 1rem 0; min-height: 1.4em; }
+  #status.error { color: var(--err); }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: .9rem 1.1rem; margin-bottom: .7rem;
+  }
+  .card .meta { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; margin-bottom: .35rem; }
+  .score {
+    background: var(--accent-soft); color: var(--accent); border-radius: 6px;
+    font-size: .75rem; padding: .1rem .45rem; font-variant-numeric: tabular-nums;
+  }
+  .src { color: var(--muted); font-size: .82rem; }
+  .card p { white-space: pre-wrap; overflow-wrap: anywhere; }
+  #answer { border-left: 3px solid var(--accent); }
+  .spin {
+    display: inline-block; width: 1em; height: 1em; vertical-align: -0.15em;
+    border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%;
+    animation: r .8s linear infinite; margin-right: .4rem;
+  }
+  @keyframes r { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <h1>Vault RAG</h1>
+  <div class="sub">Hybrid retrieval over local collections. Ask in any language.</div>
+
+  <div class="bar">
+    <select id="collection" title="Collection"></select>
+    <span class="modes">
+      <label><input type="radio" name="mode" value="search" checked><span>Search</span></label>
+      <label><input type="radio" name="mode" value="ask"><span>Ask</span></label>
+    </span>
+    <input type="text" id="category" placeholder="category (optional)" size="14">
+  </div>
+  <div class="bar">
+    <input type="text" id="query" placeholder="Type a question and press Enter" autofocus>
+    <button id="go">Go</button>
+  </div>
+
+  <div id="status"></div>
+  <div id="results"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const status = (msg, isErr = false) => {
+  $("status").innerHTML = msg;
+  $("status").className = isErr ? "error" : "";
+};
+const esc = s => s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function loadCollections() {
+  try {
+    const cols = await (await fetch("/collections")).json();
+    $("collection").innerHTML = cols.map(c =>
+      `<option value="${esc(c.name)}">${esc(c.name)} (${c.points.toLocaleString()})</option>`
+    ).join("");
+  } catch {
+    status("Cannot reach the API. Is uvicorn running?", true);
+  }
+}
+
+function renderHits(hits) {
+  if (!hits.length) { $("results").innerHTML = ""; status("No results."); return; }
+  $("results").innerHTML = hits.map(h => `
+    <div class="card">
+      <div class="meta">
+        <span class="score">${h.score.toFixed(3)}</span>
+        <span class="src">${esc(h.file)} :: ${esc(h.heading)}</span>
+      </div>
+      <p>${esc(h.text)}</p>
+    </div>`).join("");
+}
+
+function renderAnswer(d) {
+  const sources = d.sources.map(s =>
+    `<div class="src">• ${esc(s.file)} :: ${esc(s.heading)}</div>`).join("");
+  $("results").innerHTML = `
+    <div class="card" id="answer"><p>${esc(d.answer)}</p></div>
+    ${sources ? `<div class="card">${sources}</div>` : ""}`;
+}
+
+let timer = null;
+async function run() {
+  const query = $("query").value.trim();
+  if (!query) return;
+  const mode = document.querySelector("input[name=mode]:checked").value;
+  const body = {
+    query,
+    top_k: 5,
+    collection: $("collection").value || null,
+    category: $("category").value.trim() || null,
+  };
+  $("go").disabled = true;
+  $("results").innerHTML = "";
+  const t0 = Date.now();
+  if (mode === "ask") {
+    timer = setInterval(() => status(
+      `<span class="spin"></span>Generating with the local model… ${Math.round((Date.now()-t0)/1000)}s (this takes about a minute)`), 1000);
+  } else {
+    status(`<span class="spin"></span>Searching…`);
+  }
+  try {
+    const resp = await fetch("/" + mode, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || resp.statusText);
+    clearInterval(timer);
+    status(`Done in ${((Date.now()-t0)/1000).toFixed(1)}s`);
+    mode === "ask" ? renderAnswer(data) : renderHits(data);
+  } catch (e) {
+    clearInterval(timer);
+    status("Error: " + esc(e.message), true);
+  } finally {
+    $("go").disabled = false;
+  }
+}
+
+$("go").onclick = run;
+$("query").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+loadCollections();
+</script>
+</body>
+</html>

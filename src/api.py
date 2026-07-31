@@ -4,7 +4,10 @@ Start with:
     uvicorn src.api:app --port 8000
 """
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .config import COLLECTION_NAME, get_qdrant_client
@@ -17,6 +20,16 @@ app = FastAPI(
     version="0.1.0",
 )
 
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+def _check_collection(collection: str | None) -> None:
+    """Reject requests for collections that do not exist."""
+    if collection is None:
+        return
+    if not get_qdrant_client().collection_exists(collection):
+        raise HTTPException(status_code=404, detail=f"Unknown collection: {collection}")
+
 
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1)
@@ -24,6 +37,10 @@ class SearchRequest(BaseModel):
     category: str | None = Field(
         default=None,
         description="Optional filter: first-level folder name, e.g. 工作. Omit to search everything.",
+    )
+    collection: str | None = Field(
+        default=None,
+        description="Collection to query. Omit for the configured default.",
     )
 
     model_config = {
@@ -48,6 +65,10 @@ class AskRequest(BaseModel):
         default=None,
         description="Optional filter: first-level folder name, e.g. 工作. Omit to search everything.",
     )
+    collection: str | None = Field(
+        default=None,
+        description="Collection to query. Omit for the configured default.",
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -59,6 +80,22 @@ class AskRequest(BaseModel):
 class AskResponse(BaseModel):
     answer: str
     sources: list[dict]
+
+
+@app.get("/")
+def index():
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/collections")
+def collections():
+    """List available collections with point counts, default first."""
+    client = get_qdrant_client()
+    names = sorted(
+        (c.name for c in client.get_collections().collections),
+        key=lambda n: (n != COLLECTION_NAME, n),
+    )
+    return [{"name": n, "points": client.count(n).count} for n in names]
 
 
 @app.get("/health")
@@ -73,14 +110,20 @@ def health():
 
 @app.post("/search", response_model=list[SearchHit])
 def search(req: SearchRequest):
-    hits = hybrid_search(req.query, top_k=req.top_k, category=req.category)
+    _check_collection(req.collection)
+    hits = hybrid_search(
+        req.query, top_k=req.top_k, category=req.category, collection=req.collection
+    )
     return [SearchHit(**vars(h)) for h in hits]
 
 
 @app.post("/ask", response_model=AskResponse)
 def ask_endpoint(req: AskRequest):
+    _check_collection(req.collection)
     try:
-        result = ask(req.query, top_k=req.top_k, category=req.category)
+        result = ask(
+            req.query, top_k=req.top_k, category=req.category, collection=req.collection
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     return AskResponse(**result)

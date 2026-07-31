@@ -77,11 +77,16 @@ def _to_hits(points) -> list[Hit]:
     ]
 
 
-def dense_search(query: str, top_k: int = 5, category: str | None = None) -> list[Hit]:
+def dense_search(
+    query: str,
+    top_k: int = 5,
+    category: str | None = None,
+    collection: str | None = None,
+) -> list[Hit]:
     """Dense-only search, used as the baseline for hybrid comparison."""
     dense_vec = _dense_model().encode(query, normalize_embeddings=True).tolist()
     result = _client().query_points(
-        collection_name=COLLECTION_NAME,
+        collection_name=collection or COLLECTION_NAME,
         query=dense_vec,
         using="dense",
         query_filter=_category_filter(category),
@@ -96,6 +101,7 @@ def hybrid_search(
     top_k: int = 5,
     category: str | None = None,
     rerank: bool | None = None,
+    collection: str | None = None,
 ) -> list[Hit]:
     """Prefetch dense and sparse candidates, fuse with RRF, optionally rerank."""
     if rerank is None:
@@ -109,7 +115,7 @@ def hybrid_search(
 
     fetch_k = 20 if rerank else top_k
     result = _client().query_points(
-        collection_name=COLLECTION_NAME,
+        collection_name=collection or COLLECTION_NAME,
         prefetch=[
             models.Prefetch(query=dense_vec, using="dense", limit=20,
                             filter=_category_filter(category)),

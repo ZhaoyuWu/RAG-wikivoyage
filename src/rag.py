@@ -89,9 +89,14 @@ def _generate_ollama(context: str, question: str) -> str:
     return data["message"]["content"]
 
 
-def ask(question: str, top_k: int = 5, category: str | None = None) -> dict:
+def ask(
+    question: str,
+    top_k: int = 5,
+    category: str | None = None,
+    collection: str | None = None,
+) -> dict:
     """Retrieve context and generate a cited answer."""
-    hits = hybrid_search(question, top_k=top_k, category=category)
+    hits = hybrid_search(question, top_k=top_k, category=category, collection=collection)
     if not hits:
         return {"answer": "笔记库里没有相关内容。", "sources": []}
 

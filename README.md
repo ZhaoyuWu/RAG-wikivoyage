@@ -51,7 +51,8 @@ python -m src.indexer
 # 2. Try retrieval from the CLI
 python -m src.retrieval "your query"
 
-# 3. Start the API and open http://localhost:8000/docs
+# 3. Start the API, then open http://localhost:8000 for the web UI
+#    (Swagger stays available at /docs)
 uvicorn src.api:app --port 8000
 ```
 
