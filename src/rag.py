@@ -95,16 +95,36 @@ def ask(
     category: str | None = None,
     collection: str | None = None,
 ) -> dict:
-    """Retrieve context and generate a cited answer."""
+    """Retrieve context and generate a cited answer, with a pipeline trace."""
+    import time
+
+    t0 = time.perf_counter()
     hits = hybrid_search(question, top_k=top_k, category=category, collection=collection)
+    retrieval_ms = (time.perf_counter() - t0) * 1000
+
     if not hits:
-        return {"answer": "笔记库里没有相关内容。", "sources": []}
+        return {"answer": "笔记库里没有相关内容。", "sources": [], "trace": None}
 
     context = build_context(hits)
+    t1 = time.perf_counter()
     if LLM_PROVIDER == "ollama":
         answer = _generate_ollama(context, question)
+        model = OLLAMA_MODEL
     else:
         answer = _generate_anthropic(context, question)
+        model = CLAUDE_MODEL
+    generation_s = time.perf_counter() - t1
 
     sources = [{"file": h.file, "heading": h.heading, "score": h.score} for h in hits]
-    return {"answer": answer, "sources": sources}
+    trace = {
+        "provider": LLM_PROVIDER,
+        "model": model,
+        "retrieval_ms": round(retrieval_ms),
+        "generation_s": round(generation_s, 1),
+        "context_chars": len(context),
+        "chunks": [
+            {"score": h.score, "file": h.file, "heading": h.heading, "text": h.text}
+            for h in hits
+        ],
+    }
+    return {"answer": answer, "sources": sources, "trace": trace}
