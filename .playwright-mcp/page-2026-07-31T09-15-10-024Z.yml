@@ -1,0 +1,41 @@
+- generic [ref=e1]:
+  - heading "Vault RAG" [level=1] [ref=e2]
+  - generic [ref=e3]: Hybrid retrieval over local collections. Ask in any language.
+  - generic [ref=e4]:
+    - combobox "Collection" [ref=e5]:
+      - option "vault (371)"
+      - option "wikivoyage (49.460)" [selected]
+    - generic [ref=e6]:
+      - generic [ref=e7] [cursor=pointer]: Search
+      - generic [ref=e8] [cursor=pointer]: Ask
+    - textbox "category (optional)" [ref=e9]
+  - generic [ref=e10]:
+    - textbox "Type a question and press Enter" [active] [ref=e11]: Wandern im Harz mit Kindern
+    - button "Go" [ref=e12] [cursor=pointer]
+  - generic [ref=e13]: Done in 3.9s
+  - generic [ref=e14]:
+    - generic [ref=e15]:
+      - generic [ref=e16]:
+        - generic [ref=e17]: "0.500"
+        - generic [ref=e18]: "Südharz :: Aktivitäten"
+      - paragraph [ref=e19]: Wandern** Der gesamte Südharz wurde schon früher für ausgedehnte Wanderungen genutzt. Von Johann Wolfgang von Goethe, Heinrich Heine und Hans Christian Andersen um nur einige Beispiele zu nennen. Das umfangreiche Wanderwegenetz wird heute insbesondere durch den Harzklub e. V. unterhalten. Die verschiedenen Wanderwege führen vorbei an der schönen Natur, Wiesen und vorbei an der Karstlandschaft. Von Bad Sachsa aus kann man zudem auf den verschiedenen Terrainkurwegen wandern, welche besonders gesundheitsfördernd sind. Im Südharz gibt es zudem Fernwanderwege (z. B. der Harzer Hexenstieg, Karstwanderweg) und als überregionales Projekt die Harzer Wandernadel mit 222 Stempelstellen, wo an jeder passierten Stempelstelle ein Stempel in den Wanderpass darf. Ziel ist es, diesen voll zu bekommen und somit die Harzer Wandernadel verliehen zu bekommen. Karstwanderweg Harzer Baudensteig Harzer Försterstieg Harzer Grenzweg am Grünen Band Brocken Mountainbike** Im Südharz gibt es ein sehr großes, gut ausgebautes Mountainbikestreckennetz. Neben den separat zugänglichen Mountainbiketouren ist auch die Volksbank-Arena-Harz mit insgesamt 74 verschiedenen Routen und 2.200 km Streckennetz auf 59.000 Höhenmetern ein attraktives Ziel für Mountainbiker.
+    - generic [ref=e20]:
+      - generic [ref=e21]:
+        - generic [ref=e22]: "0.500"
+        - generic [ref=e23]: "Deutschland :: Aktivitäten"
+      - paragraph [ref=e24]: "Radfahren: In ganz Deutschland gibt es ein Netz von relativ gut ausgeschilderten Radwanderwegen. Diese Fahrradwege haben überwiegend eine asphaltierte oder wassergebundene Oberfläche. Teilweise verlaufen sie auf wenig befahrenen Straßen. Viele Radrouten führen entlang von Flüssen oder auf ehemaligen Bahnlinien, haben entsprechend geringe Steigungen und sind auch für Familien mit Kindern geeignet. Beliebte Flussradwege sind z. B. der Lahnradweg, der Altmühltal-Radweg oder auch der Weser-Radweg. Bei den Bahntrassenradwegen sind herausragend die Vennbahn sowie der Vulkanradweg im hesssichen Vogelsberg. Der Kanonenbahnradweg besitzt übrigens mit 1530m Deutschlands längstem Fahrradtunnel. Die Qualität von Radwegen und ihrer Beschilderung ist in den einzelnen Landkreisen und Bundesländern unterschiedlich. Eine Übersicht über alle Routen auf Wikivoyage ist im Artikel Radfahren in Deutschland zu finden. Wandern: Viele Mittelgebirgsregionen lassen sich hervorragend auf Wanderungen entdecken. Das Wandern hat in Deutschland eine lange Tradition. In vielen Regionen gibt es ausgezeichnete Angebote. Einer der bekanntesten Wanderwege ist z. B. der Rennsteig im Thüringer Wald. Ein weiterer Klassiker ist auch die Brockenwanderung im Harz. Selbst auf Deutschlands höchsten Berg, die Zugspitze, kann man zu Fuß gelangen."
+    - generic [ref=e25]:
+      - generic [ref=e26]:
+        - generic [ref=e27]: "0.389"
+        - generic [ref=e28]: "Harz :: Aktivitäten"
+      - paragraph [ref=e29]: "Wandern** Brockenwanderung - ist der Tagesklassiker im Harz. Weitere Informationen sind im Artikel Brocken zu finden. - Harzer Hexenstieg, type: trail, url: https://www.harz-hexenstieg.de/, Er ist ein Weitwanderweg, der quer durch den Harz führt. Auf ihm wandert man von Osterode aus quer durch das Gebirge bis nach Thale. Selbstverständlich wird auch der Brocken berührt. Falls das Wetter am Brocken nicht mitspielt, kann man die ebenfalls ausgeschilderte Südumgehung über St. Andreasberg und Braunlage absolvieren. Wanderführer siehe auch Abschnitt Literatur. - Harzer Grenzweg, type: trail, Fast 100 km lange Wanderroute, die der ehemaligen innerdeutschen Grenze quer duch den Harz folgt. Harzer BaudenSteig - Die etwa 100 km lange Wanderroute verbindet Bergbauden (= Berggasthöfe) und Ausflugsgaststätten zwischen Bad Grund und dem Kloster Walkenried. Harzer Försterstieg - 60 km langer Weitwanderweg im Oberharz, der vor Goslar ausgehend verschiedene Talsperren ansteuert (Info)."
+    - generic [ref=e30]:
+      - generic [ref=e31]:
+        - generic [ref=e32]: "0.333"
+        - generic [ref=e33]: "Hohegeiß :: Unterkunft"
+      - paragraph [ref=e34]: "- Campingplatz \"Am Bärenbache\", type: hotel, address: Bärenbachweg 10, 38700 Hohegeiß, phone: +49 55 83 13 06, url: https://www.campingplatz-hohegeiss.de - Hotel Rust, type: hotel, address: Am Brande 5, 38700 Hohegeiss, phone: +49 55 83 831, url: http://HotelRust-harz.de/ - New York Apartments, type: hotel, address: Am Kurpark 3, 38700 Hohegeiss, phone: +49 5171 583100, url: https://dasmerkichmir.de/, Facebook (auch Instagram) bitte nur Benutzername. - Ferienhaus Sonne, Harz & Sterne, type: hotel, address: Hubertusstraße 21 , 38700 Hohegeiß, directions: Panoramblick ins Bärenbachtal, phone: 05525959615, url: https://www.urlaubsdomizil-harz.de, price: ab 85 EUR, Das für die Harzregion einzigartige Ferienhaus wurde im dänischen Stil erbaut. Der ebenerdige Winkelbungalow mit seinem großzügigen Grundriss bietet genügend Platz und Raum und ist ideal für Paare und Familien mit 1-2 Kindern. Die liebevoll gestaltete Einrichtung wurde speziell auf die Bedürfnisse für eine Familie mit einem Baby bzw. Kleinkind abgestimmt."
+    - generic [ref=e35]:
+      - generic [ref=e36]:
+        - generic [ref=e37]: "0.300"
+        - generic [ref=e38]: "Altenau :: Weblinks"
+      - paragraph [ref=e39]: www.harztourismus.com - offizielle Touristikseite der Orte Altenau, Buntenbock, Clausthal-Zellerfeld, Sankt Andreasberg, Schulenberg und Wildemann Wandern im Harz - Wanderblog mit Informationen zum Harz, Braunlage, St. Andreasberg und Schierke
