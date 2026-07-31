@@ -26,7 +26,7 @@
   h1 { font-size: 1.4rem; margin-bottom: .2rem; }
   .sub { color: var(--muted); font-size: .85rem; margin-bottom: 1.5rem; }
   .bar { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: .75rem; }
-  select, input[type=text] {
+  select, input[type=text], input[type=datetime-local] {
     background: var(--card); color: var(--text); border: 1px solid var(--border);
     border-radius: 8px; padding: .55rem .75rem; font-size: .95rem;
   }
@@ -115,6 +115,7 @@
       <option value="transit">🚆 Train</option>
       <option value="car">🚗 Drive</option>
     </select>
+    <input type="datetime-local" id="departure" title="Departure time (transit only, empty = now)">
     <button id="goroute">Go</button>
   </div>
 
@@ -213,7 +214,8 @@ async function runRoute() {
   const resp = await fetch("/route", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ from_place, to_place, mode: $("rmode").value }),
+    body: JSON.stringify({ from_place, to_place, mode: $("rmode").value,
+                           departure: $("departure").value || null }),
   });
   const d = await resp.json();
   if (!resp.ok) throw new Error(d.detail || resp.statusText);

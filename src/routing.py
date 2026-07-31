@@ -101,14 +101,15 @@ def _db_station(query: str) -> dict:
 TRANSITOUS_URL = "https://api.transitous.org"
 
 
-def route_transit_transitous(frm: dict, to: dict) -> dict:
+def route_transit_transitous(frm: dict, to: dict, departure: str | None = None) -> dict:
     """Transit fallback via Transitous (MOTIS), queried by coordinates."""
     from datetime import datetime
 
-    resp = _get(f"{TRANSITOUS_URL}/api/v1/plan",
-                     params={"fromPlace": f"{frm['lat']},{frm['lon']}",
-                             "toPlace": f"{to['lat']},{to['lon']}"},
-                     timeout=25.0)
+    params = {"fromPlace": f"{frm['lat']},{frm['lon']}",
+              "toPlace": f"{to['lat']},{to['lon']}"}
+    if departure:
+        params["time"] = departure
+    resp = _get(f"{TRANSITOUS_URL}/api/v1/plan", params=params, timeout=25.0)
     resp.raise_for_status()
     itineraries = resp.json().get("itineraries", [])
 
@@ -135,13 +136,14 @@ def route_transit_transitous(frm: dict, to: dict) -> dict:
     return {"options": options, "geometry": None}
 
 
-def route_transit(frm: dict, to: dict) -> dict:
+def route_transit(frm: dict, to: dict, departure: str | None = None) -> dict:
     """Rail/transit journeys via the community DB REST API."""
     s_from = _db_station(frm["name"])
     s_to = _db_station(to["name"])
-    resp = _get(f"{DB_REST_URL}/journeys",
-                     params={"from": s_from["id"], "to": s_to["id"], "results": 3},
-                     timeout=25.0)
+    params = {"from": s_from["id"], "to": s_to["id"], "results": 3}
+    if departure:
+        params["departure"] = departure
+    resp = _get(f"{DB_REST_URL}/journeys", params=params, timeout=25.0)
     resp.raise_for_status()
     journeys = resp.json().get("journeys", [])
 
@@ -176,13 +178,31 @@ def route_transit(frm: dict, to: dict) -> dict:
     return {"options": options, "geometry": None}
 
 
-def route(from_place: str, to_place: str, mode: str) -> dict:
+def route(from_place: str, to_place: str, mode: str,
+          departure: str | None = None) -> dict:
+    """departure: ISO 8601 local datetime, e.g. 2026-08-02T09:00. None = now.
+    Driving durations are traffic-free estimates, so departure only affects
+    transit."""
     frm = geocode(from_place)
     to = geocode(to_place)
     if frm is None:
         raise LookupError(f"Unknown place: {from_place}")
     if to is None:
         raise LookupError(f"Unknown place: {to_place}")
+
+    if departure:
+        # Naive datetimes are taken as German local time; both backends
+        # want a full ISO timestamp with offset.
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        try:
+            dt = datetime.fromisoformat(departure)
+        except ValueError:
+            raise LookupError(f"Invalid departure time: {departure}")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo("Europe/Berlin"))
+        departure = dt.isoformat()
 
     if mode == "car":
         try:
@@ -192,10 +212,10 @@ def route(from_place: str, to_place: str, mode: str) -> dict:
     else:
         # Two independent free backends; the community DB API has outages.
         try:
-            result = route_transit(frm, to)
+            result = route_transit(frm, to, departure)
         except (httpx.HTTPError, RuntimeError):
             try:
-                result = route_transit_transitous(frm, to)
+                result = route_transit_transitous(frm, to, departure)
             except httpx.HTTPError as e:
                 raise RuntimeError(
                     f"Both transit backends unreachable (DB REST and Transitous): {e}"

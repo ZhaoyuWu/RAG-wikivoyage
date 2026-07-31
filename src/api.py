@@ -140,6 +140,10 @@ class RouteRequest(BaseModel):
     from_place: str = Field(min_length=1, description="Start, e.g. Essen")
     to_place: str = Field(min_length=1, description="Destination, e.g. Goslar")
     mode: str = Field(default="transit", pattern="^(car|transit)$")
+    departure: str | None = Field(
+        default=None,
+        description="ISO datetime for transit departure, e.g. 2026-08-02T09:00. Omit for now.",
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -153,7 +157,7 @@ def route_endpoint(req: RouteRequest):
     """Resolve A and B against the corpus gazetteer, then query a routing
     backend: OSRM for driving, the DB REST API for rail."""
     try:
-        return route(req.from_place, req.to_place, req.mode)
+        return route(req.from_place, req.to_place, req.mode, req.departure)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:
