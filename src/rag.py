@@ -89,6 +89,116 @@ def _generate_ollama(context: str, question: str) -> str:
     return data["message"]["content"]
 
 
+def _stream_ollama(context: str, question: str):
+    """Yield answer text deltas from a local Ollama model."""
+    import json as _json
+
+    import httpx
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "stream": True,
+        "options": {"temperature": 0.2},
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": f"Note excerpts:\n\n{context}\n\nQuestion: {question}",
+            },
+        ],
+    }
+    try:
+        with httpx.stream("POST", f"{OLLAMA_URL}/api/chat", json=payload, timeout=300.0) as r:
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                data = _json.loads(line)
+                if "error" in data:
+                    raise RuntimeError(f"Ollama error: {data['error']}")
+                delta = data.get("message", {}).get("content", "")
+                if delta:
+                    yield delta
+    except httpx.ConnectError:
+        raise RuntimeError(
+            f"Cannot reach Ollama at {OLLAMA_URL}. Is it installed and running? "
+            "Install from https://ollama.com, then: ollama pull " + OLLAMA_MODEL
+        )
+
+
+def _stream_anthropic(context: str, question: str):
+    """Yield answer text deltas from the Claude API."""
+    import anthropic
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not set. Either set it, or switch to a local "
+            "model with LLM_PROVIDER=ollama."
+        )
+    client = anthropic.Anthropic()
+    with client.messages.stream(
+        model=CLAUDE_MODEL,
+        max_tokens=2048,
+        system=SYSTEM_PROMPT,
+        messages=[
+            {
+                "role": "user",
+                "content": f"Note excerpts:\n\n{context}\n\nQuestion: {question}",
+            }
+        ],
+    ) as stream:
+        yield from stream.text_stream
+
+
+def ask_stream(
+    question: str,
+    top_k: int = 5,
+    category: str | None = None,
+    collection: str | None = None,
+):
+    """Yield pipeline events: retrieval trace, answer deltas, final summary."""
+    import time
+
+    t0 = time.perf_counter()
+    hits = hybrid_search(question, top_k=top_k, category=category, collection=collection)
+    retrieval_ms = round((time.perf_counter() - t0) * 1000)
+
+    chunks = [
+        {"score": h.score, "file": h.file, "heading": h.heading, "text": h.text}
+        for h in hits
+    ]
+    yield {"type": "retrieval", "retrieval_ms": retrieval_ms, "chunks": chunks}
+
+    if not hits:
+        yield {"type": "done", "answer": "笔记库里没有相关内容。", "sources": [], "trace": None}
+        return
+
+    context = build_context(hits)
+    model = OLLAMA_MODEL if LLM_PROVIDER == "ollama" else CLAUDE_MODEL
+    generate = _stream_ollama if LLM_PROVIDER == "ollama" else _stream_anthropic
+
+    t1 = time.perf_counter()
+    parts: list[str] = []
+    for delta in generate(context, question):
+        parts.append(delta)
+        yield {"type": "delta", "text": delta}
+    generation_s = round(time.perf_counter() - t1, 1)
+
+    yield {
+        "type": "done",
+        "answer": "".join(parts),
+        "sources": [{"file": h.file, "heading": h.heading, "score": h.score} for h in hits],
+        "trace": {
+            "provider": LLM_PROVIDER,
+            "model": model,
+            "retrieval_ms": retrieval_ms,
+            "generation_s": generation_s,
+            "context_chars": len(context),
+            "chunks": chunks,
+        },
+    }
+
+
 def ask(
     question: str,
     top_k: int = 5,

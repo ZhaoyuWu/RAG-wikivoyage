@@ -4,14 +4,15 @@ Start with:
     uvicorn src.api:app --port 8000
 """
 
+import json
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .config import COLLECTION_NAME, get_qdrant_client
-from .rag import ask
+from .rag import ask, ask_stream
 from .retrieval import hybrid_search
 
 app = FastAPI(
@@ -116,6 +117,23 @@ def search(req: SearchRequest):
         req.query, top_k=req.top_k, category=req.category, collection=req.collection
     )
     return [SearchHit(**vars(h)) for h in hits]
+
+
+@app.post("/ask/stream")
+def ask_stream_endpoint(req: AskRequest):
+    """Server-sent events: retrieval trace, answer deltas, final summary."""
+    _check_collection(req.collection)
+
+    def gen():
+        try:
+            for event in ask_stream(
+                req.query, top_k=req.top_k, category=req.category, collection=req.collection
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except RuntimeError as e:
+            yield f"data: {json.dumps({'type': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @app.post("/ask", response_model=AskResponse)

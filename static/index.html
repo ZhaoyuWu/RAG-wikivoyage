@@ -121,40 +121,86 @@ function renderHits(hits) {
     </div>`).join("");
 }
 
-function renderAnswer(d) {
-  const sources = d.sources.map(s =>
-    `<div class="src">• ${esc(s.file)} :: ${esc(s.heading)}</div>`).join("");
-  let trace = "";
-  if (d.trace) {
-    const t = d.trace;
-    const chunks = t.chunks.map(c => `
-      <div class="card">
-        <div class="meta">
-          <span class="score">${c.score.toFixed(3)}</span>
-          <span class="src">${esc(c.file)} :: ${esc(c.heading)}</span>
-        </div>
-        <p>${esc(c.text)}</p>
-      </div>`).join("");
-    trace = `
-      <details class="trace">
-        <summary>How this answer was made</summary>
-        <div class="src" style="margin:.6rem 0">
-          Retrieval: <b>${t.retrieval_ms} ms</b> over the collection →
-          ${t.chunks.length} chunks (${t.context_chars.toLocaleString()} chars of context) →
-          ${esc(t.model)} (${esc(t.provider)}) read it all and generated the answer in
-          <b>${t.generation_s} s</b>. Generation dominates because a local model
-          produces a handful of tokens per second on CPU.
-        </div>
-        ${chunks}
-      </details>`;
-  }
-  $("results").innerHTML = `
-    <div class="card" id="answer"><p>${esc(d.answer)}</p></div>
-    ${sources ? `<div class="card">${sources}</div>` : ""}
-    ${trace}`;
+function traceSummaryLine(t) {
+  return `Retrieval: <b>${t.retrieval_ms} ms</b> →
+    ${t.chunks.length} chunks (${t.context_chars ? t.context_chars.toLocaleString() + " chars" : "no context"}) →
+    ${esc(t.model || "")} generated the answer in <b>${t.generation_s} s</b>.
+    Generation dominates because a local model produces a handful of tokens per second on CPU.`;
 }
 
-let timer = null;
+async function runAskStream(body, t0) {
+  // Live layout: process panel (open while thinking) above, answer filling below.
+  $("results").innerHTML = `
+    <details class="trace" id="livetrace" open>
+      <summary>How this answer is being made</summary>
+      <div class="src" id="tracestats" style="margin:.6rem 0">Retrieving…</div>
+      <div id="tracechunks"></div>
+    </details>
+    <div class="card" id="answer" style="display:none"><p id="answertext"></p></div>
+    <div class="card" id="sourcecard" style="display:none"></div>`;
+  const timer = setInterval(() => status(
+    `<span class="spin"></span>Working… ${Math.round((Date.now()-t0)/1000)}s`), 500);
+
+  try {
+    const resp = await fetch("/ask/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const d = await resp.json().catch(() => ({}));
+      throw new Error(d.detail || resp.statusText);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const events = buf.split("\n\n");
+      buf = events.pop();
+      for (const raw of events) {
+        if (!raw.startsWith("data: ")) continue;
+        const ev = JSON.parse(raw.slice(6));
+        if (ev.type === "retrieval") {
+          $("tracestats").innerHTML =
+            `Retrieved <b>${ev.chunks.length}</b> chunks in <b>${ev.retrieval_ms} ms</b> — the model is now reading them…`;
+          $("tracechunks").innerHTML = ev.chunks.map(c => `
+            <div class="card">
+              <div class="meta">
+                <span class="score">${c.score.toFixed(3)}</span>
+                <span class="src">${esc(c.file)} :: ${esc(c.heading)}</span>
+              </div>
+              <p>${esc(c.text)}</p>
+            </div>`).join("");
+        } else if (ev.type === "delta") {
+          $("answer").style.display = "";
+          $("answertext").textContent += ev.text;
+        } else if (ev.type === "done") {
+          clearInterval(timer);
+          $("answer").style.display = "";
+          $("answertext").textContent = ev.answer;
+          if (ev.sources.length) {
+            $("sourcecard").style.display = "";
+            $("sourcecard").innerHTML = ev.sources.map(s =>
+              `<div class="src">• ${esc(s.file)} :: ${esc(s.heading)}</div>`).join("");
+          }
+          const lt = $("livetrace");
+          lt.removeAttribute("open");  // collapse the process once the answer is in
+          lt.querySelector("summary").textContent = "How this answer was made";
+          if (ev.trace) $("tracestats").innerHTML = traceSummaryLine(ev.trace);
+          status(`Done in ${((Date.now()-t0)/1000).toFixed(1)}s`);
+        } else if (ev.type === "error") {
+          throw new Error(ev.detail);
+        }
+      }
+    }
+  } finally {
+    clearInterval(timer);
+  }
+}
+
 async function run() {
   const query = $("query").value.trim();
   if (!query) return;
@@ -168,25 +214,22 @@ async function run() {
   $("go").disabled = true;
   $("results").innerHTML = "";
   const t0 = Date.now();
-  if (mode === "ask") {
-    timer = setInterval(() => status(
-      `<span class="spin"></span>Generating with the local model… ${Math.round((Date.now()-t0)/1000)}s (this takes about a minute)`), 1000);
-  } else {
-    status(`<span class="spin"></span>Searching…`);
-  }
   try {
-    const resp = await fetch("/" + mode, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.detail || resp.statusText);
-    clearInterval(timer);
-    status(`Done in ${((Date.now()-t0)/1000).toFixed(1)}s`);
-    mode === "ask" ? renderAnswer(data) : renderHits(data);
+    if (mode === "ask") {
+      await runAskStream(body, t0);
+    } else {
+      status(`<span class="spin"></span>Searching…`);
+      const resp = await fetch("/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || resp.statusText);
+      status(`Done in ${((Date.now()-t0)/1000).toFixed(1)}s`);
+      renderHits(data);
+    }
   } catch (e) {
-    clearInterval(timer);
     status("Error: " + esc(e.message), true);
   } finally {
     $("go").disabled = false;
