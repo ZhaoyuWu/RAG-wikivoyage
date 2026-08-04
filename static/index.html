@@ -82,6 +82,14 @@
   #radius { display: none; }
   .opt { display: flex; gap: .8rem; align-items: baseline; }
   .opt .dur { font-weight: 700; color: var(--accent); white-space: nowrap; }
+  .bubble-user {
+    background: var(--accent-soft); border-color: transparent;
+    margin-left: 20%; margin-top: 1.1rem;
+  }
+  #newchat {
+    background: var(--card); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 8px; padding: .55rem .75rem; cursor: pointer; font-size: .9rem;
+  }
 </style>
 </head>
 <body>
@@ -107,6 +115,7 @@
   <div class="bar" id="searchbar">
     <input type="text" id="query" placeholder="Type a question and press Enter" autofocus>
     <button id="go">Go</button>
+    <button id="newchat" title="Clear conversation">↺ New</button>
   </div>
   <div class="bar" id="routebar" style="display:none">
     <input type="text" id="from" placeholder="From (e.g. Essen)" size="16">
@@ -220,7 +229,12 @@ async function runRoute() {
   const d = await resp.json();
   if (!resp.ok) throw new Error(d.detail || resp.statusText);
 
-  $("results").innerHTML = d.options.map(o => `
+  renderRouteResult(d, $("results"));
+  status(`${d.from.name} → ${d.to.name}, ${d.options.length} option(s)`);
+}
+
+function renderRouteResult(d, container) {
+  container.innerHTML = d.options.map(o => `
     <div class="card">
       <div class="opt">
         <span class="dur">${Math.floor(o.duration_min / 60)}h ${o.duration_min % 60}m</span>
@@ -244,7 +258,6 @@ async function runRoute() {
       { color: "#2563eb", weight: 2, dashArray: "6 8" }).addTo(routeLayer);
   }
   map.fitBounds(L.featureGroup([a, b]).getBounds().pad(0.25));
-  status(`${d.from.name} → ${d.to.name}, ${d.options.length} option(s)`);
 }
 
 function traceSummaryLine(t) {
@@ -254,16 +267,39 @@ function traceSummaryLine(t) {
     Generation dominates because a local model produces a handful of tokens per second on CPU.`;
 }
 
+let chatHistory = [];
+
+function el(tag, cls, html) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (html !== undefined) node.innerHTML = html;
+  return node;
+}
+
 async function runAskStream(body, t0) {
-  // Live layout: process panel (open while thinking) above, answer filling below.
-  $("results").innerHTML = `
-    <details class="trace" id="livetrace" open>
+  // Chat style: append a user bubble plus an answer block per turn.
+  const results = $("results");
+  results.appendChild(el("div", "card bubble-user", `<p>${esc(body.query)}</p>`));
+
+  const turn = el("div");
+  turn.innerHTML = `
+    <details class="trace" open>
       <summary>How this answer is being made</summary>
-      <div class="src" id="tracestats" style="margin:.6rem 0">Retrieving…</div>
-      <div id="tracechunks"></div>
+      <div class="src t-stats" style="margin:.6rem 0">Retrieving…</div>
+      <div class="t-chunks"></div>
     </details>
-    <div class="card" id="answer" style="display:none"><p id="answertext"></p></div>
-    <div class="card" id="sourcecard" style="display:none"></div>`;
+    <div class="card t-answer" style="display:none"><p></p></div>
+    <div class="card t-sources" style="display:none"></div>
+    <div class="t-route"></div>`;
+  results.appendChild(turn);
+  turn.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  const stats = turn.querySelector(".t-stats");
+  const answerCard = turn.querySelector(".t-answer");
+  const answerText = answerCard.querySelector("p");
+  const details = turn.querySelector("details");
+
+  body.history = chatHistory.slice(-8);
   const timer = setInterval(() => status(
     `<span class="spin"></span>Working… ${Math.round((Date.now()-t0)/1000)}s`), 500);
 
@@ -289,10 +325,15 @@ async function runAskStream(body, t0) {
       for (const raw of events) {
         if (!raw.startsWith("data: ")) continue;
         const ev = JSON.parse(raw.slice(6));
-        if (ev.type === "retrieval") {
-          $("tracestats").innerHTML =
-            `Retrieved <b>${ev.chunks.length}</b> chunks in <b>${ev.retrieval_ms} ms</b> — the model is now reading them…`;
-          $("tracechunks").innerHTML = ev.chunks.map(c => `
+        if (ev.type === "intent") {
+          stats.innerHTML = `Detected a routing question: <b>${esc(ev.from_place)}</b> → <b>${esc(ev.to_place)}</b> (${ev.mode}). Querying routing services…`;
+        } else if (ev.type === "rewrite") {
+          stats.innerHTML = `Follow-up rewritten for retrieval (<b>${ev.rewrite_s}s</b>): “${esc(ev.query)}” — retrieving…`;
+        } else if (ev.type === "retrieval") {
+          const prefix = stats.innerHTML.startsWith("Follow-up") ? stats.innerHTML.split(" — ")[0] + " — " : "";
+          stats.innerHTML = prefix +
+            `retrieved <b>${ev.chunks.length}</b> chunks in <b>${ev.retrieval_ms} ms</b>, the model is now reading them…`;
+          turn.querySelector(".t-chunks").innerHTML = ev.chunks.map(c => `
             <div class="card">
               <div class="meta">
                 <span class="score">${c.score.toFixed(3)}</span>
@@ -301,22 +342,27 @@ async function runAskStream(body, t0) {
               <p>${esc(c.text)}</p>
             </div>`).join("");
         } else if (ev.type === "delta") {
-          $("answer").style.display = "";
-          $("answertext").textContent += ev.text;
+          answerCard.style.display = "";
+          answerText.textContent += ev.text;
+        } else if (ev.type === "route") {
+          renderRouteResult(ev.data, turn.querySelector(".t-route"));
         } else if (ev.type === "done") {
           clearInterval(timer);
-          $("answer").style.display = "";
-          $("answertext").textContent = ev.answer;
+          answerCard.style.display = "";
+          answerText.textContent = ev.answer;
           if (ev.sources.length) {
-            $("sourcecard").style.display = "";
-            $("sourcecard").innerHTML = ev.sources.map(s =>
+            const sc = turn.querySelector(".t-sources");
+            sc.style.display = "";
+            sc.innerHTML = ev.sources.map(s =>
               `<div class="src">• ${esc(s.file)} :: ${esc(s.heading)}</div>`).join("");
           }
-          const lt = $("livetrace");
-          lt.removeAttribute("open");  // collapse the process once the answer is in
-          lt.querySelector("summary").textContent = "How this answer was made";
-          if (ev.trace) $("tracestats").innerHTML = traceSummaryLine(ev.trace);
+          details.removeAttribute("open");
+          details.querySelector("summary").textContent = "How this answer was made";
+          if (ev.trace) stats.innerHTML = traceSummaryLine(ev.trace);
           status(`Done in ${((Date.now()-t0)/1000).toFixed(1)}s`);
+          chatHistory.push({ role: "user", content: body.query });
+          chatHistory.push({ role: "assistant", content: ev.answer.slice(0, 2000) });
+          $("query").value = "";
         } else if (ev.type === "error") {
           throw new Error(ev.detail);
         }
@@ -346,7 +392,7 @@ async function run() {
     geo: geoFilter,
   };
   $("go").disabled = true;
-  $("results").innerHTML = "";
+  if (mode !== "ask") $("results").innerHTML = "";  // ask mode accumulates a conversation
   const t0 = Date.now();
   try {
     if (mode === "ask") {
@@ -404,6 +450,14 @@ $("radius").onchange = () => {
     drawGeoFilter();
   }
 };
+
+function resetChat() {
+  chatHistory = [];
+  $("results").innerHTML = "";
+  status("New conversation.");
+}
+$("newchat").onclick = resetChat;
+$("collection").addEventListener("change", resetChat);
 
 loadCollections();
 </script>

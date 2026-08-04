@@ -66,6 +66,7 @@ def _generate_ollama(context: str, question: str) -> str:
             json={
                 "model": OLLAMA_MODEL,
                 "stream": False,
+                "keep_alive": "2h",
                 "options": {"temperature": 0.2},
                 "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
@@ -89,7 +90,29 @@ def _generate_ollama(context: str, question: str) -> str:
     return data["message"]["content"]
 
 
-def _stream_ollama(context: str, question: str):
+def ollama_keepalive() -> None:
+    """Preload the model into RAM and keep it resident for two hours."""
+    import httpx
+
+    httpx.post(f"{OLLAMA_URL}/api/generate",
+               json={"model": OLLAMA_MODEL, "keep_alive": "2h"}, timeout=300.0)
+
+
+def _chat_messages(context: str | None, question: str,
+                   history: list[dict] | None, system: str) -> list[dict]:
+    """System prompt, prior turns, then the current question with excerpts."""
+    messages = [{"role": "system", "content": system}]
+    for m in (history or [])[-6:]:
+        if m.get("role") in ("user", "assistant") and m.get("content"):
+            messages.append({"role": m["role"], "content": m["content"][:1500]})
+    content = question if context is None else \
+        f"Note excerpts:\n\n{context}\n\nQuestion: {question}"
+    messages.append({"role": "user", "content": content})
+    return messages
+
+
+def _stream_ollama(context: str | None, question: str,
+                   history: list[dict] | None = None, system: str = SYSTEM_PROMPT):
     """Yield answer text deltas from a local Ollama model."""
     import json as _json
 
@@ -98,14 +121,9 @@ def _stream_ollama(context: str, question: str):
     payload = {
         "model": OLLAMA_MODEL,
         "stream": True,
+        "keep_alive": "2h",
         "options": {"temperature": 0.2},
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": f"Note excerpts:\n\n{context}\n\nQuestion: {question}",
-            },
-        ],
+        "messages": _chat_messages(context, question, history, system),
     }
     try:
         with httpx.stream("POST", f"{OLLAMA_URL}/api/chat", json=payload, timeout=300.0) as r:
@@ -126,7 +144,8 @@ def _stream_ollama(context: str, question: str):
         )
 
 
-def _stream_anthropic(context: str, question: str):
+def _stream_anthropic(context: str | None, question: str,
+                      history: list[dict] | None = None, system: str = SYSTEM_PROMPT):
     """Yield answer text deltas from the Claude API."""
     import anthropic
 
@@ -136,18 +155,54 @@ def _stream_anthropic(context: str, question: str):
             "model with LLM_PROVIDER=ollama."
         )
     client = anthropic.Anthropic()
+    messages = _chat_messages(context, question, history, system)[1:]  # system separate
     with client.messages.stream(
         model=CLAUDE_MODEL,
         max_tokens=2048,
-        system=SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": f"Note excerpts:\n\n{context}\n\nQuestion: {question}",
-            }
-        ],
+        system=system,
+        messages=messages,
     ) as stream:
         yield from stream.text_stream
+
+
+_ANAPHORA = ("那", "这", "它", "他", "她", "呢", "此", "还有", "继续", "上面",
+             "刚才", "之前", "the same", "there", "it ", "that ", "dort", "das")
+
+
+def _needs_rewrite(question: str, history: list[dict]) -> bool:
+    """Cheap gate: only pay an LLM rewrite when the question looks like a
+    follow-up that cannot stand alone."""
+    if not history:
+        return False
+    if len(question) <= 12:
+        return True
+    lowered = question.lower()
+    return any(marker in question or marker in lowered for marker in _ANAPHORA)
+
+
+def _rewrite_query(question: str, history: list[dict]) -> str:
+    """Condense a follow-up into a standalone search query via the LLM."""
+    recent = history[-4:]
+    convo = "\n".join(f"{m['role']}: {m['content'][:300]}" for m in recent)
+    prompt = (
+        "Conversation so far:\n" + convo +
+        f"\n\nFollow-up question: {question}\n\n"
+        "Rewrite the follow-up as one standalone search query that keeps all "
+        "names and places from the context. Reply with the query only, in the "
+        "language of the follow-up."
+    )
+    generate = _stream_ollama if LLM_PROVIDER == "ollama" else _stream_anthropic
+    rewrite_system = ("You rewrite follow-up questions into standalone search "
+                      "queries. Reply with the query only, nothing else.")
+    try:
+        rewritten = "".join(generate(None, prompt, None, rewrite_system)).strip()
+        # Guard against a chatty model: keep it only if it looks like a query.
+        rewritten = rewritten.split("来源")[0].split("Source:")[0].strip().strip('"')
+        if 0 < len(rewritten) < 200 and "\n" not in rewritten:
+            return rewritten
+    except RuntimeError:
+        pass
+    return question
 
 
 def ask_stream(
@@ -155,12 +210,45 @@ def ask_stream(
     top_k: int = 5,
     category: str | None = None,
     collection: str | None = None,
+    history: list[dict] | None = None,
 ):
     """Yield pipeline events: retrieval trace, answer deltas, final summary."""
     import time
 
+    history = history or []
+
+    # A routing question ("How do I get from A to B?") is answered by the
+    # routing backends, not by retrieval.
+    from .intent import detect_route_intent
+    from .routing import route
+
+    intent = detect_route_intent(question)
+    if intent:
+        yield {"type": "intent", "intent": "route", **intent}
+        try:
+            result = route(intent["from_place"], intent["to_place"], intent["mode"])
+        except (LookupError, RuntimeError) as e:
+            yield {"type": "error", "detail": str(e)}
+            return
+        best = min(o["duration_min"] for o in result["options"])
+        answer = (f"{result['from']['name']} → {result['to']['name']} "
+                  f"({'driving' if intent['mode'] == 'car' else 'train'}): "
+                  f"fastest option {best // 60}h {best % 60}m, "
+                  f"{len(result['options'])} option(s) shown on the map.")
+        yield {"type": "route", "data": result}
+        yield {"type": "done", "answer": answer, "sources": [], "trace": None}
+        return
+
+    search_query = question
+    if _needs_rewrite(question, history):
+        t_r = time.perf_counter()
+        search_query = _rewrite_query(question, history)
+        if search_query != question:
+            yield {"type": "rewrite", "query": search_query,
+                   "rewrite_s": round(time.perf_counter() - t_r, 1)}
+
     t0 = time.perf_counter()
-    hits = hybrid_search(question, top_k=top_k, category=category, collection=collection)
+    hits = hybrid_search(search_query, top_k=top_k, category=category, collection=collection)
     retrieval_ms = round((time.perf_counter() - t0) * 1000)
 
     chunks = [
@@ -179,7 +267,7 @@ def ask_stream(
 
     t1 = time.perf_counter()
     parts: list[str] = []
-    for delta in generate(context, question):
+    for delta in generate(context, question, history):
         parts.append(delta)
         yield {"type": "delta", "text": delta}
     generation_s = round(time.perf_counter() - t1, 1)

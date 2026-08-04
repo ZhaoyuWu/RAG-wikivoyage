@@ -11,16 +11,44 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .config import COLLECTION_NAME, get_qdrant_client
+from .config import COLLECTION_NAME, get_qdrant_client, utf8_stdout
 from .rag import ask, ask_stream
 from .retrieval import hybrid_search
 from .routing import route
+
+utf8_stdout()  # Windows consoles default to cp1252; CJK paths crash prints
 
 app = FastAPI(
     title="Vault RAG",
     description="Hybrid retrieval + RAG over a personal Obsidian vault",
     version="0.1.0",
 )
+
+WARM = {"done": False}
+
+
+@app.on_event("startup")
+def warmup():
+    """Load embedding models, vector collections, and the local LLM in the
+    background so the first real query does not pay the cold start."""
+    import threading
+
+    def _warm():
+        try:
+            client = get_qdrant_client()
+            for c in client.get_collections().collections:
+                hybrid_search("warmup", top_k=1, collection=c.name)
+            from .config import LLM_PROVIDER
+            if LLM_PROVIDER == "ollama":
+                from .rag import ollama_keepalive
+                ollama_keepalive()
+        except Exception as e:
+            print("warmup skipped: " + repr(e).encode("ascii", "replace").decode(),
+                  flush=True)
+        WARM["done"] = True
+        print("warmup complete", flush=True)
+
+    threading.Thread(target=_warm, daemon=True).start()
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -83,6 +111,11 @@ class AskRequest(BaseModel):
         default=None,
         description="Collection to query. Omit for the configured default.",
     )
+    history: list[dict] | None = Field(
+        default=None,
+        description="Prior conversation turns [{role, content}], newest last.",
+        max_length=12,
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -115,12 +148,16 @@ def collections():
 
 @app.get("/health")
 def health():
+    if not WARM["done"]:
+        # Keep Qdrant untouched while the warmup thread is loading it.
+        return {"status": "warming", "collection": COLLECTION_NAME, "points": None}
     client = get_qdrant_client()
     if not client.collection_exists(COLLECTION_NAME):
         return {"status": "empty", "collection": COLLECTION_NAME, "points": 0,
                 "hint": "run: python -m src.indexer"}
     count = client.count(COLLECTION_NAME).count
-    return {"status": "ok", "collection": COLLECTION_NAME, "points": count}
+    status = "ok" if WARM["done"] else "warming"
+    return {"status": status, "collection": COLLECTION_NAME, "points": count}
 
 
 @app.post("/search", response_model=list[SearchHit])
@@ -172,7 +209,8 @@ def ask_stream_endpoint(req: AskRequest):
     def gen():
         try:
             for event in ask_stream(
-                req.query, top_k=req.top_k, category=req.category, collection=req.collection
+                req.query, top_k=req.top_k, category=req.category,
+                collection=req.collection, history=req.history,
             ):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except RuntimeError as e:
