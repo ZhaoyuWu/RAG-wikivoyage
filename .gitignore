@@ -14,3 +14,6 @@ data/
 
 # Audit logs stay local
 logs/
+
+# Eval history (regenerated per run)
+eval/history/

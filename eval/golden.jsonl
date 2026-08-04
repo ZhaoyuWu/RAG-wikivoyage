@@ -1,0 +1,25 @@
+{"q": "柏林有什么艺术博物馆值得看", "expect": ["Berlin"], "note": "landmark museums"}
+{"q": "科隆大教堂有什么看点", "expect": ["Köln"], "note": "cathedral"}
+{"q": "汉堡港口城有什么", "expect": ["Hamburg"], "note": "harbor / speicherstadt"}
+{"q": "慕尼黑英国花园", "expect": ["München"], "note": "englischer garten"}
+{"q": "法兰克福机场怎么转机", "expect": ["Flughafen Frankfurt"], "note": "airport"}
+{"q": "德累斯顿老城有什么景点", "expect": ["Dresden"], "note": "altstadt"}
+{"q": "莱比锡有什么值得看的", "expect": ["Leipzig"], "note": "city"}
+{"q": "斯图加特的博物馆", "expect": ["Stuttgart"], "note": "museums"}
+{"q": "杜塞尔多夫老城", "expect": ["Düsseldorf"], "note": "altstadt"}
+{"q": "不来梅的市政厅", "expect": ["Bremen"], "note": "rathaus"}
+{"q": "波茨坦无忧宫", "expect": ["Potsdam"], "note": "sanssouci"}
+{"q": "魏玛和歌德有什么关系", "expect": ["Weimar"], "note": "goethe"}
+{"q": "吕贝克老城", "expect": ["Lübeck"], "note": "hanseatic old town"}
+{"q": "罗滕堡中世纪小城", "expect": ["Rothenburg"], "note": "medieval town"}
+{"q": "维尔茨堡官邸", "expect": ["Würzburg"], "note": "residenz"}
+{"q": "班贝格老城", "expect": ["Bamberg"], "note": "unesco old town"}
+{"q": "亚琛大教堂", "expect": ["Aachen"], "note": "cathedral"}
+{"q": "特里尔的罗马遗迹", "expect": ["Trier"], "note": "roman ruins"}
+{"q": "明斯特自行车城", "expect": ["Münster"], "note": "bicycle city"}
+{"q": "康斯坦茨湖", "expect": ["Konstanz", "Bodensee"], "note": "lake constance"}
+{"q": "弗莱堡黑森林", "expect": ["Freiburg"], "note": "black forest gateway"}
+{"q": "海德堡老桥", "expect": ["Heidelberg"], "note": "alte brücke"}
+{"q": "戈斯拉尔矿山", "expect": ["Goslar"], "note": "rammelsberg"}
+{"q": "奎德林堡半木房", "expect": ["Quedlinburg"], "note": "fachwerk"}
+{"q": "施特拉尔松德海洋馆", "expect": ["Stralsund"], "note": "ozeaneum"}

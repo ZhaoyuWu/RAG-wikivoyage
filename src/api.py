@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import audit, ratelimit
+from . import audit, metrics, ratelimit
 from .auth import authenticate, create_token, decode_token
 from .config import (
     ASK_RATE_PER_MIN,
@@ -103,6 +103,7 @@ def _authorize_collection(ident: dict, collection: str | None) -> list[str]:
 def _enforce_rate(ident: dict, bucket: str, per_min: int) -> None:
     retry = ratelimit.check(f"{bucket}:{ident['user']}", per_min)
     if retry is not None:
+        metrics.inc("rag_rate_limited_total", {"bucket": bucket})
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit: {per_min}/min for {bucket}. Retry in {int(retry) + 1}s.",
@@ -248,6 +249,14 @@ def audit_log(limit: int = 50, ident: dict = Depends(require_admin)):
     return audit.recent(min(limit, 500))
 
 
+@app.get("/metrics")
+def prometheus_metrics():
+    """Prometheus text-format metrics for scraping."""
+    from fastapi.responses import PlainTextResponse
+
+    return PlainTextResponse(metrics.render())
+
+
 @app.post("/search", response_model=list[SearchHit])
 def search(req: SearchRequest, ident: dict = Depends(require_user)):
     _check_collection(req.collection)
@@ -319,20 +328,36 @@ def ask_stream_endpoint(req: AskRequest, ident: dict = Depends(require_user)):
     deny = _authorize_collection(ident, req.collection)
     _enforce_rate(ident, "ask", ASK_RATE_PER_MIN)
 
+    import time as _time
+
+    coll = req.collection or COLLECTION_NAME
+    metrics.inc("rag_ask_total", {"collection": coll})
+
     def gen():
         rewritten = None
+        t_start = _time.perf_counter()
         try:
             for event in ask_stream(
                 req.query, top_k=req.top_k, category=req.category,
                 collection=req.collection, history=req.history,
                 deny_categories=deny,
             ):
-                if event["type"] == "rewrite":
+                etype = event["type"]
+                if etype == "rewrite":
                     rewritten = event["query"]
-                elif event["type"] == "done":
+                elif etype == "guard":
+                    metrics.inc("rag_guard_blocked_total", {"tier": event["tier"]})
+                elif etype == "fallback":
+                    metrics.inc("rag_cloud_fallback_total", {})
+                elif etype == "done":
                     _audit_done(ident, req, event, rewritten)
+                    prov = ((event.get("trace") or {}).get("provider")) or "none"
+                    metrics.inc("rag_ask_provider_total", {"provider": prov})
+                    metrics.observe("rag_ask_latency_seconds",
+                                    _time.perf_counter() - t_start, {"collection": coll})
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except RuntimeError as e:
+            metrics.inc("rag_ask_error_total", {"collection": coll})
             audit.log_event({"event": "ask_error", "user": ident["user"],
                              "query": req.query, "detail": str(e)})
             yield f"data: {json.dumps({'type': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
