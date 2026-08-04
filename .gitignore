@@ -1,5 +1,6 @@
-# Local planning document, not part of the published project
+# Local planning / handover documents, not part of the published project
 IMPLEMENTATION_PLAN.md
+HANDOVER.md
 
 venv/
 qdrant_db/
