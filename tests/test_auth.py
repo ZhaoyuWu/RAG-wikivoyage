@@ -56,3 +56,13 @@ def test_ratelimit_blocks_then_frees():
     assert retry is not None and retry > 0
     time.sleep(0.35)
     assert ratelimit.check(key, 3, window_s=0.3) is None
+
+
+def test_ratelimit_keys_are_isolated():
+    """Login throttling must be per-IP: one exhausted key must not block a
+    different one, or one attacker could lock out every user (DoS)."""
+    a, b = f"login:{time.monotonic()}:1.1.1.1", f"login:{time.monotonic()}:2.2.2.2"
+    for _ in range(10):
+        ratelimit.check(a, 10, window_s=5)
+    assert ratelimit.check(a, 10, window_s=5) is not None   # attacker blocked
+    assert ratelimit.check(b, 10, window_s=5) is None       # victim unaffected

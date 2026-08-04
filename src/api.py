@@ -7,7 +7,7 @@ Start with:
 import json
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -122,10 +122,11 @@ class LoginRequest(BaseModel):
 
 
 @app.post("/login")
-def login(req: LoginRequest):
-    # Throttled hard: failed guesses against PBKDF2 are cheap for us,
-    # brute force should not be.
-    retry = ratelimit.check("login", 10)
+def login(req: LoginRequest, request: Request):
+    # Throttle per client IP, not globally: a shared bucket would let one
+    # attacker's failed guesses lock every legitimate user out (DoS).
+    client_ip = request.client.host if request.client else "unknown"
+    retry = ratelimit.check(f"login:{client_ip}", 10)
     if retry is not None:
         raise HTTPException(status_code=429, detail="Too many login attempts")
     ident = authenticate(req.username, req.password)
