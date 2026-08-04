@@ -13,11 +13,32 @@ import json
 import math
 import re
 
-from .rag import _pick_provider
-from .retrieval import hybrid_search
-from .routing import geocode, route
+# Heavy retrieval/routing imports (qdrant_client, torch via their modules) are
+# deferred, so importing this module for its pure geometry/parsing helpers —
+# as the unit tests and CI do — does not require the vector-store stack to be
+# installed. These thin wrappers import on first call; tests monkeypatch them.
 
 PLANNER_COLLECTION = "wikivoyage"
+
+
+def geocode(place):
+    from .routing import geocode as _geocode
+    return _geocode(place)
+
+
+def route(from_place, to_place, mode, departure=None):
+    from .routing import route as _route
+    return _route(from_place, to_place, mode, departure)
+
+
+def hybrid_search(*args, **kwargs):
+    from .retrieval import hybrid_search as _hybrid_search
+    return _hybrid_search(*args, **kwargs)
+
+
+def _pick_provider(collection):
+    from .rag import _pick_provider as _pp
+    return _pp(collection)
 
 # Chinese/English interest words -> the Wikivoyage section headings that hold
 # them, so a "美食" request can be narrowed to the Küche sections.
