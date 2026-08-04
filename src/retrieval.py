@@ -59,12 +59,16 @@ def _client():
 
 
 def _build_filter(category: str | None, geo: dict | None,
-                  deny_categories: list[str] | None = None) -> models.Filter | None:
-    """Combine optional category, geo-radius, and ACL deny conditions.
+                  deny_categories: list[str] | None = None,
+                  headings: list[str] | None = None,
+                  deny_headings: list[str] | None = None) -> models.Filter | None:
+    """Combine optional category, geo-radius, heading, and ACL conditions.
 
     deny_categories enforces document-level access control at the
     retrieval layer: excluded chunks never reach the LLM, so a restricted
-    user's answer cannot leak them.
+    user's answer cannot leak them. headings/deny_headings narrow retrieval
+    to (or away from) specific Wikivoyage sections, used by the planner to
+    align results with a travel intent.
     """
     must: list = []
     must_not: list = []
@@ -82,9 +86,19 @@ def _build_filter(category: str | None, geo: dict | None,
                 ),
             )
         )
+    if headings:
+        must.append(
+            models.FieldCondition(key="heading",
+                                  match=models.MatchAny(any=list(headings)))
+        )
     for denied in deny_categories or []:
         must_not.append(
             models.FieldCondition(key="category", match=models.MatchValue(value=denied))
+        )
+    if deny_headings:
+        must_not.append(
+            models.FieldCondition(key="heading",
+                                  match=models.MatchAny(any=list(deny_headings)))
         )
     if not must and not must_not:
         return None
@@ -134,6 +148,8 @@ def hybrid_search(
     collection: str | None = None,
     geo: dict | None = None,
     deny_categories: list[str] | None = None,
+    headings: list[str] | None = None,
+    deny_headings: list[str] | None = None,
 ) -> list[Hit]:
     """Prefetch dense and sparse candidates, fuse with RRF, optionally rerank."""
     if rerank is None:
@@ -145,7 +161,8 @@ def hybrid_search(
         indices=sparse_raw.indices.tolist(), values=sparse_raw.values.tolist()
     )
 
-    query_filter = _build_filter(category, geo, deny_categories)
+    query_filter = _build_filter(category, geo, deny_categories,
+                                 headings, deny_headings)
     fetch_k = 20 if rerank else top_k
     result = _client().query_points(
         collection_name=collection or COLLECTION_NAME,

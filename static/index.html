@@ -508,24 +508,35 @@ async function runAskStream(body, t0) {
   }
 }
 
+const DAY_COLORS = ["#7c3aed", "#2563eb", "#059669", "#d97706", "#dc2626"];
+
 function renderPlanRoute(origin, stops) {
   ensureMap();
   routeLayer.clearLayers();
   poiLayer.clearLayers();
-  const pts = [];
+  const all = [];
   if (origin) {
     L.marker([origin.lat, origin.lon]).bindPopup("出发: " + esc(origin.name)).addTo(routeLayer);
-    pts.push([origin.lat, origin.lon]);
+    all.push([origin.lat, origin.lon]);
   }
-  stops.forEach((s, i) => {
-    if (!s.geo) return;
-    L.marker([s.geo.lat, s.geo.lon]).bindPopup(`${i + 1}. ${esc(s.file)}`).addTo(routeLayer);
-    pts.push([s.geo.lat, s.geo.lon]);
+  // Group stops by day; each day gets its own colour and its own line from
+  // the origin, so a multi-day plan reads as distinct daily loops.
+  const byDay = {};
+  stops.forEach(s => { if (s.geo) (byDay[s.day || 1] ||= []).push(s); });
+  Object.keys(byDay).sort((a, b) => a - b).forEach(day => {
+    const color = DAY_COLORS[(day - 1) % DAY_COLORS.length];
+    const pts = origin ? [[origin.lat, origin.lon]] : [];
+    byDay[day].forEach((s, i) => {
+      L.marker([s.geo.lat, s.geo.lon])
+        .bindPopup(`Day ${day} · ${i + 1}. ${esc(s.file)}`).addTo(routeLayer);
+      pts.push([s.geo.lat, s.geo.lon]);
+      all.push([s.geo.lat, s.geo.lon]);
+    });
+    if (pts.length > 1)
+      L.polyline(pts, { color, weight: 3, dashArray: "6 8" }).addTo(routeLayer);
   });
-  if (pts.length > 1) {
-    L.polyline(pts, { color: "#7c3aed", weight: 3, dashArray: "6 8" }).addTo(routeLayer);
-    map.fitBounds(L.polyline(pts).getBounds().pad(0.2), { maxZoom: 11 });
-  }
+  if (all.length > 1)
+    map.fitBounds(L.polyline(all).getBounds().pad(0.2), { maxZoom: 11 });
 }
 
 async function runPlanStream(body, t0) {
@@ -573,7 +584,9 @@ async function runPlanStream(body, t0) {
         } else if (ev.type === "candidates") {
           stats.innerHTML += `<br>Found <b>${ev.count}</b> candidate places (${ev.sample.slice(0,5).map(esc).join(", ")}…) — clustering by distance…`;
         } else if (ev.type === "cluster") {
-          stats.innerHTML += `<br>Chained <b>${ev.stops.length}</b> nearest stops: ${ev.stops.map(esc).join(" → ")} — computing travel times…`;
+          const dayLines = ev.stops_per_day.map((day, i) =>
+            `Day ${i + 1}: ${day.map(esc).join(" → ")}`).join("<br>");
+          stats.innerHTML += `<br>Grouped into <b>${ev.days}</b> day(s):<br>${dayLines}<br>— computing travel times…`;
         } else if (ev.type === "routing") {
           const h = Math.floor(ev.total_travel_min / 60), m = ev.total_travel_min % 60;
           stats.innerHTML += `<br>Total travel <b>${h}h ${m}m</b> — writing the itinerary…`;
