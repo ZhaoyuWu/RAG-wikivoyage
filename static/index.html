@@ -102,6 +102,7 @@
       <label><input type="radio" name="mode" value="search" checked><span>Search</span></label>
       <label><input type="radio" name="mode" value="ask"><span>Ask</span></label>
       <label><input type="radio" name="mode" value="route"><span>Route</span></label>
+      <label><input type="radio" name="mode" value="plan"><span>🗺️ Plan</span></label>
     </span>
     <input type="text" id="category" placeholder="category (optional)" size="14">
     <button id="geobtn" title="Filter results by map location">📍 near</button>
@@ -507,6 +508,100 @@ async function runAskStream(body, t0) {
   }
 }
 
+function renderPlanRoute(origin, stops) {
+  ensureMap();
+  routeLayer.clearLayers();
+  poiLayer.clearLayers();
+  const pts = [];
+  if (origin) {
+    L.marker([origin.lat, origin.lon]).bindPopup("出发: " + esc(origin.name)).addTo(routeLayer);
+    pts.push([origin.lat, origin.lon]);
+  }
+  stops.forEach((s, i) => {
+    if (!s.geo) return;
+    L.marker([s.geo.lat, s.geo.lon]).bindPopup(`${i + 1}. ${esc(s.file)}`).addTo(routeLayer);
+    pts.push([s.geo.lat, s.geo.lon]);
+  });
+  if (pts.length > 1) {
+    L.polyline(pts, { color: "#7c3aed", weight: 3, dashArray: "6 8" }).addTo(routeLayer);
+    map.fitBounds(L.polyline(pts).getBounds().pad(0.2), { maxZoom: 11 });
+  }
+}
+
+async function runPlanStream(body, t0) {
+  const results = $("results");
+  const turn = el("div");
+  turn.innerHTML = `
+    <div class="card bubble-user"><p>${esc(body.query)}</p></div>
+    <details class="trace" open>
+      <summary>How this itinerary is being planned</summary>
+      <div class="src t-stats" style="margin:.6rem 0">Planning…</div>
+    </details>
+    <div class="card t-answer" style="display:none"><p></p></div>`;
+  results.prepend(turn);
+  turn.scrollIntoView({ behavior: "smooth", block: "start" });
+  const stats = turn.querySelector(".t-stats");
+  const answerCard = turn.querySelector(".t-answer");
+  const answerText = answerCard.querySelector("p");
+
+  const timer = setInterval(() => status(
+    `<span class="spin"></span>Planning… ${Math.round((Date.now()-t0)/1000)}s`), 500);
+  try {
+    const resp = await api("/plan/stream", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: body.query, collection: body.collection }),
+    });
+    if (!resp.ok) {
+      const d = await resp.json().catch(() => ({}));
+      throw new Error(d.detail || resp.statusText);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "", planOrigin = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const events = buf.split("\n\n");
+      buf = events.pop();
+      for (const raw of events) {
+        if (!raw.startsWith("data: ")) continue;
+        const ev = JSON.parse(raw.slice(6));
+        if (ev.type === "parse") {
+          planOrigin = ev.origin;
+          stats.innerHTML = `Parsed: from <b>${esc(ev.origin)}</b>, ${ev.days} day(s), interests ${ev.likes.map(esc).join(", ")}${ev.excludes.length ? ", avoiding " + ev.excludes.map(esc).join(", ") : ""} — retrieving candidates…`;
+        } else if (ev.type === "candidates") {
+          stats.innerHTML += `<br>Found <b>${ev.count}</b> candidate places (${ev.sample.slice(0,5).map(esc).join(", ")}…) — clustering by distance…`;
+        } else if (ev.type === "cluster") {
+          stats.innerHTML += `<br>Chained <b>${ev.stops.length}</b> nearest stops: ${ev.stops.map(esc).join(" → ")} — computing travel times…`;
+        } else if (ev.type === "routing") {
+          const h = Math.floor(ev.total_travel_min / 60), m = ev.total_travel_min % 60;
+          stats.innerHTML += `<br>Total travel <b>${h}h ${m}m</b> — writing the itinerary…`;
+        } else if (ev.type === "delta") {
+          answerCard.style.display = "";
+          answerText.textContent += ev.text;
+        } else if (ev.type === "done") {
+          clearInterval(timer);
+          answerCard.style.display = "";
+          answerText.textContent = ev.answer;
+          if (ev.stops && ev.stops.length) {
+            renderPlanRoute(ev.origin || planOrigin, ev.stops);
+          }
+          turn.querySelector("details").removeAttribute("open");
+          turn.querySelector("summary").textContent = "How this itinerary was planned";
+          if (ev.trace) stats.innerHTML = `Planned a ${ev.trace.stops}-stop day from ${ev.trace.candidates} candidates, ${Math.floor(ev.trace.total_travel_min/60)}h ${ev.trace.total_travel_min%60}m total travel, via ${esc(ev.trace.provider)}/${esc(ev.trace.model)}.`;
+          status(`Done in ${((Date.now()-t0)/1000).toFixed(1)}s`);
+          $("query").value = "";
+        } else if (ev.type === "error") {
+          throw new Error(ev.detail);
+        }
+      }
+    }
+  } finally {
+    clearInterval(timer);
+  }
+}
+
 async function run() {
   const mode = document.querySelector("input[name=mode]:checked").value;
   if (mode === "route") {
@@ -531,6 +626,8 @@ async function run() {
   try {
     if (mode === "ask") {
       await runAskStream(body, t0);
+    } else if (mode === "plan") {
+      await runPlanStream(body, t0);
     } else {
       status(`<span class="spin"></span>Searching…`);
       const resp = await api("/search", {
@@ -557,10 +654,14 @@ $("to").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
 
 document.querySelectorAll("input[name=mode]").forEach(r =>
   r.addEventListener("change", () => {
-    const isRoute = r.value === "route" && r.checked;
+    if (!r.checked) return;
+    const isRoute = r.value === "route";
     $("searchbar").style.display = isRoute ? "none" : "flex";
     $("routebar").style.display = isRoute ? "flex" : "none";
-    if (isRoute) ensureMap();
+    $("query").placeholder = r.value === "plan"
+      ? "描述行程,如:从 Essen 出发一天,想看城堡和徒步,不要夜店"
+      : "Type a question and press Enter";
+    if (isRoute || r.value === "plan") ensureMap();
   }));
 
 $("geobtn").onclick = () => {

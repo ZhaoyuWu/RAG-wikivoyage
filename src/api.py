@@ -357,6 +357,49 @@ def route_endpoint(req: RouteRequest, ident: dict = Depends(require_user)):
         raise HTTPException(status_code=502, detail=str(e))
 
 
+class PlanRequest(BaseModel):
+    query: str = Field(min_length=1)
+    collection: str | None = Field(
+        default=None,
+        description="Corpus to plan over. Omit for the travel corpus.",
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{"query": "从 Essen 出发,一天,想看城堡和徒步,不要夜店"}]
+        }
+    }
+
+
+@app.post("/plan/stream")
+def plan_stream_endpoint(req: PlanRequest, ident: dict = Depends(require_user)):
+    """Server-sent events: parse the request, retrieve candidates, cluster
+    and route them, then stream a synthesized itinerary."""
+    from .planner import PLANNER_COLLECTION, plan_stream
+
+    coll = req.collection or PLANNER_COLLECTION
+    _authorize_collection(ident, coll)
+    _enforce_rate(ident, "ask", ASK_RATE_PER_MIN)
+    metrics.inc("rag_plan_total", {"collection": coll})
+
+    def gen():
+        try:
+            for event in plan_stream(req.query, collection=req.collection):
+                if event["type"] == "done":
+                    audit.log_event({
+                        "event": "plan", "user": ident["user"], "role": ident["role"],
+                        "collection": coll, "query": req.query,
+                        "stops": [s["file"] for s in event.get("stops") or []],
+                        "answer_sha": audit.answer_hash(event.get("answer") or ""),
+                    })
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except RuntimeError as e:
+            metrics.inc("rag_plan_error_total", {"collection": coll})
+            yield f"data: {json.dumps({'type': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
 def _audit_done(ident: dict, req: "AskRequest", event: dict, rewritten: str | None) -> None:
     trace = event.get("trace") or {}
     audit.log_event({
