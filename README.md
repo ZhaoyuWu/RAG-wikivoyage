@@ -107,6 +107,24 @@ python -m flows.reindex_flow
 
 Compares md5 hashes stored in the payload against the files on disk, then re-embeds only changed files and deletes chunks of removed files.
 
+### Multi-user mode (optional)
+
+```bash
+# generate a hash, put name:hash:role into APP_USERS, set JWT_SECRET
+python -m src.auth "my-password"
+# then run with auth on:
+AUTH_ENABLED=1 uvicorn src.api:app --port 8000
+```
+
+With `AUTH_ENABLED=0` (default) the API is open for single-user local use.
+
+### Retrieval benchmark & evaluation
+
+```bash
+python -m scripts.bench_hnsw     # P50/P95 retrieval latency for this backend
+python -m eval.run_eval          # golden-set hit rate + faithfulness
+```
+
 ## Hybrid vs Dense: why both?
 
 Dense embeddings handle semantic paraphrase: the query "换了雇主社保和养老金要注意什么" (what about social insurance and pension after changing employers) finds the pension notes even though they never use that phrasing. BM25 handles exact rare terms that embedding models dilute: proper nouns, product names, error codes.
@@ -138,6 +156,30 @@ Lessons that only showed up at this scale, all reproducible in the git history:
 - A 6-hour job needs to survive interruption. Upserts happen per article batch, so a resumed run skips completed articles by comparing stored file hashes; transient disk errors (external USB drive) are retried with backoff instead of killing the run.
 - Query latency on 49k chunks is ~1.2s in embedded local mode, which does exact brute-force search. That is the point where switching to the Docker Qdrant server (HNSW index) stops being over-engineering, which is why both modes exist behind one config switch.
 
+## Production hardening
+
+A demo becomes a product across a few layers the happy path never touches.
+Each is implemented here in a single-node form that keeps the enterprise
+API contract:
+
+- **Auth & RBAC** — JWT bearer tokens over PBKDF2 hashes (`AUTH_ENABLED=0`
+  keeps local mode open). Roles filter **retrieval itself**: a restricted
+  user's answer can never quote a document they may not read.
+- **Prompt-injection defense** — a regex + LLM input guard, plus excerpt
+  isolation that both tags and *sanitizes* retrieved text. A poisoned-doc
+  experiment showed tag declaration alone wasn't enough; sanitizing was.
+- **Rate limits & cost guardrail** — per-user sliding window; a daily
+  cloud-call budget degrades to the local model.
+- **Audit log** — append-only JSONL: who asked what, which documents
+  backed each answer (answers stored as a hash, not text).
+- **Metrics & evaluation** — Prometheus `/metrics` (latency histogram,
+  provider mix, guard blocks) and an offline golden-set eval measuring
+  retrieval hit rate and LLM-judged faithfulness, run as a Prefect flow.
+- **Server-side conversations** — SQLite store; a conversation can be
+  exported to markdown and re-indexed into the vault.
+
+See [SECURITY.md](SECURITY.md) for the data boundaries and threat model.
+
 ## Tech
 
 | Component | Choice |
@@ -148,8 +190,10 @@ Lessons that only showed up at this scale, all reproducible in the git history:
 | Fusion | Qdrant Query API prefetch + RRF |
 | Reranker (optional) | BAAI/bge-reranker-v2-m3 cross-encoder |
 | API | FastAPI + pydantic v2, SSE streaming |
-| Generation | Ollama (local) or Claude API, one config switch |
-| Orchestration | Prefect |
+| Generation | Ollama (local), Groq (cloud, public data), or Claude API |
+| Auth | JWT (PyJWT) + PBKDF2, role-based retrieval filtering |
+| Observability | Prometheus text metrics, JSONL audit log |
+| Orchestration | Prefect (incremental re-index + evaluation flows) |
 | Frontend | Single static HTML page, no build step |
 
 ## Privacy

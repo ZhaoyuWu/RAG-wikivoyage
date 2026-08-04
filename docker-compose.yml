@@ -13,11 +13,24 @@ services:
     environment:
       - QDRANT_MODE=server
       - QDRANT_URL=http://qdrant:6333
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - VAULT_PATH=/vault
+      # Auth and hardening (batch A/B). Off by default; set to enable.
+      - AUTH_ENABLED=${AUTH_ENABLED:-0}
+      - JWT_SECRET=${JWT_SECRET:-}
+      - APP_USERS=${APP_USERS:-}
+      - USE_RERANKER=${USE_RERANKER:-0}
     volumes:
       # Mount your notes read-only so the indexer can reach them.
       - "${VAULT_PATH}:/vault:ro"
+      # Conversations and audit logs persist on the host.
+      - "./data:/app/data"
+      - "./logs:/app/logs"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - qdrant
 
