@@ -1,3 +1,10 @@
+[tool.pytest.ini_options]
+# Put the project root on sys.path so `from src import ...` resolves the
+# same way in CI as it does locally. Without this, pytest's rootdir
+# autodetection may not add the root, and every test fails to import.
+pythonpath = ["."]
+testpaths = ["tests"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

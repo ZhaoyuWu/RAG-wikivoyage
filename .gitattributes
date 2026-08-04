@@ -1,0 +1,7 @@
+# Normalize line endings: developed on Windows, CI runs on Linux.
+# Force LF for text so parsers/tools behave identically in both places.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
