@@ -1,6 +1,6 @@
 # Vault RAG
 
-Hybrid retrieval question answering over local markdown corpora. Notes are chunked by heading, embedded twice (dense multilingual vectors and BM25 sparse vectors), stored in Qdrant, fused with Reciprocal Rank Fusion, and answered by an LLM with source citations. Everything runs locally; the answering model can be a local Ollama model or the Claude API, switched by one config value.
+Hybrid retrieval question answering over local markdown corpora. Notes are chunked by heading, embedded twice (dense multilingual vectors and BM25 sparse vectors), stored in Qdrant, fused with Reciprocal Rank Fusion, and answered by an LLM with source citations. The AI pipeline runs locally by default; the answering model is a local Ollama model, the Claude API, or — for public collections only — Groq's fast cloud model, selected per collection. Private notes never leave the machine.
 
 Built and tested on two corpora: a personal Obsidian vault (371 chunks) and the German Wikivoyage travel guide (49,460 chunks), indexed by the included data pipeline.
 
@@ -57,12 +57,13 @@ Boundary note: the AI pipeline (embedding, retrieval, generation) stays fully lo
                                                       └───────┬────────┘
                     ┌─────────────────────────────────────────┼─────┐
                     │                 Query                   ▼     │
- question ──▶ embed both ways ──▶ prefetch dense + sparse ──▶ RRF   │
-                    │                                          │    │
+ question ──▶ guard ──▶ embed both ways ──▶ prefetch d+s ──▶ RRF    │
+                    │           (+ RBAC deny filter)            │   │
                     │               top-k chunks ◀─────────────┘    │
                     └────────────────┬──────────────────────────────┘
                                      ▼
-                     Ollama (local) or Claude API
+              provider per collection: Ollama (local, private notes)
+              · Claude API · Groq (cloud, public data only)
                                      ▼
                      streamed answer + citations + trace
 ```
@@ -89,7 +90,7 @@ python -m src.indexer
 uvicorn src.api:app --port 8000
 ```
 
-For the ask mode, either install [Ollama](https://ollama.com), pull a model (`ollama pull qwen2.5:7b-instruct`) and set `LLM_PROVIDER=ollama` in `.env`, or set `ANTHROPIC_API_KEY` to use the Claude API. Search mode needs neither.
+For the ask mode, either install [Ollama](https://ollama.com), pull a model (`ollama pull qwen2.5:7b-instruct`) and set `LLM_PROVIDER=ollama` in `.env`, or set `ANTHROPIC_API_KEY` to use the Claude API. Optionally set `GROQ_API_KEY` to route public collections (listed in `CLOUD_COLLECTIONS`) to Groq's fast cloud model while private notes stay local. Search mode needs no LLM at all.
 
 ### Docker
 

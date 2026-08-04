@@ -7,6 +7,7 @@ qdrant_db/
 __pycache__/
 *.pyc
 .pytest_cache/
+.ruff_cache/
 models_cache/
 .claude/
 data/
