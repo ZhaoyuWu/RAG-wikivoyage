@@ -210,6 +210,7 @@ def _stream_groq(context: str | None, question: str,
         "messages": _chat_messages(context, question, history, system),
     }
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
+    count_groq_call()
     try:
         with httpx.stream("POST", f"{GROQ_URL}/chat/completions",
                           json=payload, headers=headers, timeout=60.0) as r:
@@ -240,14 +241,34 @@ def _local_provider():
     return "anthropic", CLAUDE_MODEL, _stream_anthropic
 
 
+# Cost guardrail: daily cloud-call counter (in-process; one uvicorn worker).
+_GROQ_CALLS = {"day": "", "n": 0}
+
+
+def _groq_budget_ok() -> bool:
+    import time
+
+    from .config import GROQ_DAILY_LIMIT
+
+    today = time.strftime("%Y%m%d")
+    if _GROQ_CALLS["day"] != today:
+        _GROQ_CALLS["day"], _GROQ_CALLS["n"] = today, 0
+    return _GROQ_CALLS["n"] < GROQ_DAILY_LIMIT
+
+
+def count_groq_call() -> None:
+    _GROQ_CALLS["n"] += 1
+
+
 def _pick_provider(collection: str | None):
     """Return (name, model, stream_fn) for a collection.
 
-    Public-data collections go to the fast cloud model when a key is set;
-    private collections always stay on the local provider.
+    Public-data collections go to the fast cloud model when a key is set
+    and the daily budget is not exhausted; private collections always stay
+    on the local provider.
     """
     resolved = collection or COLLECTION_NAME
-    if GROQ_API_KEY and resolved in CLOUD_COLLECTIONS:
+    if GROQ_API_KEY and resolved in CLOUD_COLLECTIONS and _groq_budget_ok():
         return "groq", GROQ_MODEL, _stream_groq
     return _local_provider()
 
@@ -305,6 +326,7 @@ def ask_stream(
     category: str | None = None,
     collection: str | None = None,
     history: list[dict] | None = None,
+    deny_categories: list[str] | None = None,
 ):
     """Yield pipeline events: retrieval trace, answer deltas, final summary."""
     import time
@@ -350,7 +372,8 @@ def ask_stream(
                    "rewrite_s": round(time.perf_counter() - t_r, 1)}
 
     t0 = time.perf_counter()
-    hits = hybrid_search(search_query, top_k=top_k, category=category, collection=collection)
+    hits = hybrid_search(search_query, top_k=top_k, category=category,
+                         collection=collection, deny_categories=deny_categories)
     retrieval_ms = round((time.perf_counter() - t0) * 1000)
 
     chunks = [
@@ -403,12 +426,14 @@ def ask(
     top_k: int = 5,
     category: str | None = None,
     collection: str | None = None,
+    deny_categories: list[str] | None = None,
 ) -> dict:
     """Retrieve context and generate a cited answer, with a pipeline trace."""
     import time
 
     t0 = time.perf_counter()
-    hits = hybrid_search(question, top_k=top_k, category=category, collection=collection)
+    hits = hybrid_search(question, top_k=top_k, category=category,
+                         collection=collection, deny_categories=deny_categories)
     retrieval_ms = (time.perf_counter() - t0) * 1000
 
     if not hits:

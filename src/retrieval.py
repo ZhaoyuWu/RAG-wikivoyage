@@ -58,9 +58,16 @@ def _client():
     return get_qdrant_client()
 
 
-def _build_filter(category: str | None, geo: dict | None) -> models.Filter | None:
-    """Combine optional category and geo-radius conditions."""
+def _build_filter(category: str | None, geo: dict | None,
+                  deny_categories: list[str] | None = None) -> models.Filter | None:
+    """Combine optional category, geo-radius, and ACL deny conditions.
+
+    deny_categories enforces document-level access control at the
+    retrieval layer: excluded chunks never reach the LLM, so a restricted
+    user's answer cannot leak them.
+    """
     must: list = []
+    must_not: list = []
     if category:
         must.append(
             models.FieldCondition(key="category", match=models.MatchValue(value=category))
@@ -75,7 +82,13 @@ def _build_filter(category: str | None, geo: dict | None) -> models.Filter | Non
                 ),
             )
         )
-    return models.Filter(must=must) if must else None
+    for denied in deny_categories or []:
+        must_not.append(
+            models.FieldCondition(key="category", match=models.MatchValue(value=denied))
+        )
+    if not must and not must_not:
+        return None
+    return models.Filter(must=must or None, must_not=must_not or None)
 
 
 def _to_hits(points) -> list[Hit]:
@@ -120,6 +133,7 @@ def hybrid_search(
     rerank: bool | None = None,
     collection: str | None = None,
     geo: dict | None = None,
+    deny_categories: list[str] | None = None,
 ) -> list[Hit]:
     """Prefetch dense and sparse candidates, fuse with RRF, optionally rerank."""
     if rerank is None:
@@ -131,7 +145,7 @@ def hybrid_search(
         indices=sparse_raw.indices.tolist(), values=sparse_raw.values.tolist()
     )
 
-    query_filter = _build_filter(category, geo)
+    query_filter = _build_filter(category, geo, deny_categories)
     fetch_k = 20 if rerank else top_k
     result = _client().query_points(
         collection_name=collection or COLLECTION_NAME,

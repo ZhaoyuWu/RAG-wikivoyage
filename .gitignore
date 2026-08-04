@@ -11,3 +11,6 @@ models_cache/
 .claude/
 data/
 .playwright-mcp/
+
+# Audit logs stay local
+logs/

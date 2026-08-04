@@ -132,8 +132,49 @@
   <div id="status"></div>
   <div id="results"></div>
 
+  <div id="loginwrap" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.5); z-index:2000; align-items:center; justify-content:center">
+    <div class="card" style="min-width:280px; background:var(--card)">
+      <h3 style="margin:0 0 .8rem">Sign in</h3>
+      <input id="lu" placeholder="Username" autocomplete="username" style="width:100%; margin-bottom:.5rem; padding:.5rem; border:1px solid var(--border); border-radius:8px">
+      <input id="lp" type="password" placeholder="Password" autocomplete="current-password" style="width:100%; margin-bottom:.6rem; padding:.5rem; border:1px solid var(--border); border-radius:8px">
+      <button id="loginbtn" style="width:100%">Login</button>
+      <div id="loginmsg" class="src" style="color:#dc2626; margin-top:.5rem"></div>
+    </div>
+  </div>
+
 <script>
 const $ = id => document.getElementById(id);
+
+// ---- Auth ----
+// With AUTH_ENABLED=0 on the server every request passes and this token
+// simply stays unused.
+let TOKEN = localStorage.getItem("vaultrag_token") || "";
+
+async function api(url, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers,
+    TOKEN ? { "Authorization": "Bearer " + TOKEN } : {});
+  const resp = await fetch(url, opts);
+  if (resp.status === 401) {
+    $("loginwrap").style.display = "flex";
+    throw new Error("Please log in.");
+  }
+  return resp;
+}
+
+async function doLogin() {
+  const resp = await fetch("/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: $("lu").value, password: $("lp").value }),
+  });
+  const d = await resp.json().catch(() => ({}));
+  if (!resp.ok) { $("loginmsg").textContent = d.detail || "Login failed"; return; }
+  TOKEN = d.token;
+  localStorage.setItem("vaultrag_token", TOKEN);
+  $("loginwrap").style.display = "none";
+  $("loginmsg").textContent = "";
+  init();
+}
 
 // ---- Map ----
 let map = null, poiLayer = null, geoLayer = null, routeLayer = null;
@@ -192,7 +233,7 @@ const esc = s => s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'
 
 async function loadCollections() {
   try {
-    const cols = await (await fetch("/collections")).json();
+    const cols = await (await api("/collections")).json();
     $("collection").innerHTML = cols.map(c =>
       `<option value="${esc(c.name)}">${esc(c.name)} (${c.points.toLocaleString()})</option>`
     ).join("");
@@ -220,7 +261,7 @@ async function runRoute() {
   if (!from_place || !to_place) { status("Enter both places.", true); return; }
   status(`<span class="spin"></span>Routing…`);
   $("results").innerHTML = "";
-  const resp = await fetch("/route", {
+  const resp = await api("/route", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ from_place, to_place, mode: $("rmode").value,
@@ -393,7 +434,7 @@ async function runAskStream(body, t0) {
     `<span class="spin"></span>Working… ${Math.round((Date.now()-t0)/1000)}s`), 500);
 
   try {
-    const resp = await fetch("/ask/stream", {
+    const resp = await api("/ask/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -486,7 +527,7 @@ async function run() {
       await runAskStream(body, t0);
     } else {
       status(`<span class="spin"></span>Searching…`);
-      const resp = await fetch("/search", {
+      const resp = await api("/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -546,6 +587,8 @@ function resetChat() {
   status("New conversation.");
 }
 $("newchat").onclick = resetChat;
+$("loginbtn").onclick = doLogin;
+$("lp").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
 $("collection").addEventListener("change", () => { resetChat(); savePrefs(); });
 document.querySelectorAll("input[name=mode]").forEach(r =>
   r.addEventListener("change", savePrefs));

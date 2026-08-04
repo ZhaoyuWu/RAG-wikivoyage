@@ -68,6 +68,44 @@ CLOUD_COLLECTIONS = {
     c.strip() for c in os.environ.get("CLOUD_COLLECTIONS", "wikivoyage").split(",")
     if c.strip()
 }
+# Cost guardrail: after this many cloud calls in one day, fall back to local.
+GROQ_DAILY_LIMIT = int(os.environ.get("GROQ_DAILY_LIMIT", "2000"))
+
+# --- Auth (enterprise hardening, batch A) ---------------------------------
+# AUTH_ENABLED=0 (default) keeps the API open for single-user local use;
+# every request then acts as admin. Enable for the multi-user demo.
+AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "0") == "1"
+JWT_SECRET = os.environ.get("JWT_SECRET", "")
+JWT_TTL_HOURS = int(os.environ.get("JWT_TTL_HOURS", "168"))
+
+
+def _parse_users(raw: str) -> dict[str, dict]:
+    """APP_USERS format: name:pbkdf2salt$hash:role, comma-separated."""
+    users: dict[str, dict] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        name, _, rest = entry.partition(":")
+        pw_hash, _, role = rest.rpartition(":")
+        users[name] = {"hash": pw_hash, "role": role or "guest"}
+    return users
+
+
+APP_USERS = _parse_users(os.environ.get("APP_USERS", ""))
+
+# Role-based access. collections=None means every collection is allowed;
+# deny_categories are excluded inside the retrieval filter itself, so a
+# restricted user's answers can never quote what they may not read.
+ROLE_RULES: dict[str, dict] = {
+    "admin": {"collections": None, "deny_categories": []},
+    "guest": {"collections": None, "deny_categories": ["工作"]},
+}
+
+# Rate limits (per user, per minute) and audit log location.
+ASK_RATE_PER_MIN = int(os.environ.get("ASK_RATE_PER_MIN", "10"))
+SEARCH_RATE_PER_MIN = int(os.environ.get("SEARCH_RATE_PER_MIN", "30"))
+LOGS_DIR = PROJECT_ROOT / "logs"
 
 
 def utf8_stdout() -> None:
