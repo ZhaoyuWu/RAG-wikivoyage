@@ -34,6 +34,27 @@ SYSTEM_PROMPT = (
     "you actually used as 'file :: heading', one per line."
 )
 
+# Public travel corpus: the model's own knowledge is allowed as a fallback,
+# clearly labeled, but the topic must stay within travel. Private notes keep
+# the strict SYSTEM_PROMPT above, where inventing facts is unacceptable.
+TRAVEL_PROMPT = (
+    "You are a travel assistant backed by a German travel-guide corpus. The "
+    "provided note excerpts are supporting material, not your only knowledge. "
+    "Answer in the language of the question.\n"
+    "Rules:\n"
+    "- Prefer facts from the excerpts. End with a '来源:' section listing "
+    "each excerpt you actually used as 'file :: heading', one per line. If "
+    "you used none, omit the section entirely.\n"
+    "- If the excerpts do not cover the question but it is still about "
+    "travel, places, geography, culture, food, or transport, answer from "
+    "your own knowledge and start that part with '💡 笔记库未覆盖，以下来自"
+    "模型知识：' (translated to the question's language). Never list a "
+    "source for such content and never invent citations.\n"
+    "- If the question is unrelated to travel and places (e.g. programming, "
+    "politics, medical or legal advice), politely reply that this assistant "
+    "only answers travel-related questions, and answer nothing else."
+)
+
 
 def build_context(hits: list[Hit]) -> str:
     blocks = []
@@ -313,6 +334,8 @@ def ask_stream(
         return
 
     provider, model, generate = _pick_provider(collection)
+    resolved = collection or COLLECTION_NAME
+    system = TRAVEL_PROMPT if resolved in CLOUD_COLLECTIONS else SYSTEM_PROMPT
 
     search_query = question
     # The cloud model rewrites in well under a second, so every follow-up
@@ -345,7 +368,7 @@ def ask_stream(
     t1 = time.perf_counter()
     parts: list[str] = []
     try:
-        for delta in generate(context, question, history):
+        for delta in generate(context, question, history, system):
             parts.append(delta)
             yield {"type": "delta", "text": delta}
     except RuntimeError as e:
@@ -353,7 +376,7 @@ def ask_stream(
         if provider == "groq" and not parts:
             provider, model, generate = _local_provider()
             yield {"type": "fallback", "detail": str(e), "provider": provider}
-            for delta in generate(context, question, history):
+            for delta in generate(context, question, history, system):
                 parts.append(delta)
                 yield {"type": "delta", "text": delta}
         else:
