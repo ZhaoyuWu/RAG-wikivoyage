@@ -280,12 +280,12 @@ function el(tag, cls, html) {
 }
 
 async function runAskStream(body, t0) {
-  // Chat style: append a user bubble plus an answer block per turn.
+  // Chat style: newest turn first. Each turn is one wrapper holding the
+  // user bubble and its answer block, prepended above older turns.
   const results = $("results");
-  results.appendChild(el("div", "card bubble-user", `<p>${esc(body.query)}</p>`));
-
   const turn = el("div");
   turn.innerHTML = `
+    <div class="card bubble-user"><p>${esc(body.query)}</p></div>
     <details class="trace" open>
       <summary>How this answer is being made</summary>
       <div class="src t-stats" style="margin:.6rem 0">Retrieving…</div>
@@ -294,7 +294,7 @@ async function runAskStream(body, t0) {
     <div class="card t-answer" style="display:none"><p></p></div>
     <div class="card t-sources" style="display:none"></div>
     <div class="t-route"></div>`;
-  results.appendChild(turn);
+  results.prepend(turn);
   turn.scrollIntoView({ behavior: "smooth", block: "start" });
 
   const stats = turn.querySelector(".t-stats");
