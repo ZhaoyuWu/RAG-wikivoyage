@@ -116,6 +116,8 @@
     <input type="text" id="query" placeholder="Type a question and press Enter" autofocus>
     <button id="go">Go</button>
     <button id="newchat" title="Clear conversation">↺ New</button>
+    <button id="savechat" title="Save this conversation to the server">💾 Save</button>
+    <select id="history" title="Load a saved conversation"><option value="">History…</option></select>
   </div>
   <div class="bar" id="routebar" style="display:none">
     <input type="text" id="from" placeholder="From (e.g. Essen)" size="16">
@@ -593,6 +595,62 @@ function resetChat() {
 $("newchat").onclick = resetChat;
 $("loginbtn").onclick = doLogin;
 $("lp").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+
+// ---- Server-side conversations ----
+async function saveConversation() {
+  if (!savedTurns.length) { status("Nothing to save yet."); return; }
+  const messages = [];
+  for (const t of savedTurns) {
+    if (!t.answer) continue;
+    messages.push({ role: "user", content: t.query });
+    messages.push({ role: "assistant", content: t.answer,
+      sources: (t.sources || []).map(s => `${s.file} :: ${s.heading}`).join("; ") });
+  }
+  const title = savedTurns[savedTurns.length - 1].query.slice(0, 40);
+  const resp = await api("/conversations", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ collection: $("collection").value, title, messages }),
+  });
+  const d = await resp.json();
+  status(`Saved as conversation #${d.id}.`);
+  loadHistory();
+}
+
+async function loadHistory() {
+  try {
+    const list = await (await api("/conversations")).json();
+    $("history").innerHTML = '<option value="">History…</option>' +
+      list.map(c => `<option value="${c.id}">${esc(c.title)} · ${c.updated_at.slice(5, 16).replace("T", " ")}</option>`).join("");
+  } catch { /* not logged in yet */ }
+}
+
+async function openConversation(cid) {
+  const d = await (await api("/conversations/" + cid)).json();
+  resetChat();
+  for (const m of d.messages) {
+    if (m.role === "user") {
+      savedTurns.push({ query: m.content, answer: "", sources: [] });
+    } else if (savedTurns.length) {
+      const t = savedTurns[savedTurns.length - 1];
+      t.answer = m.content;
+      t.sources = (m.sources || "").split("; ").filter(Boolean).map(s => {
+        const [file, heading] = s.split(" :: ");
+        return { file, heading: heading || "" };
+      });
+    }
+  }
+  $("results").innerHTML = "";
+  for (const t of savedTurns) {
+    restoreTurn(t);
+    chatHistory.push({ role: "user", content: t.query });
+    chatHistory.push({ role: "assistant", content: (t.answer || "").slice(0, 2000) });
+  }
+  saveChat();
+  status(`Loaded conversation #${cid}. Add to it, or ↺ New to start fresh.`);
+}
+
+$("savechat").onclick = () => saveConversation().catch(e => status("Error: " + esc(e.message), true));
+$("history").onchange = e => { if (e.target.value) openConversation(e.target.value); };
 $("collection").addEventListener("change", () => { resetChat(); savePrefs(); });
 document.querySelectorAll("input[name=mode]").forEach(r =>
   r.addEventListener("change", savePrefs));
@@ -610,6 +668,7 @@ async function init() {
     $("collection").value = prefs.collection;
   }
   restoreChat();
+  loadHistory();
 }
 init();
 </script>

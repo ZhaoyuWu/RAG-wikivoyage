@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import audit, metrics, ratelimit
+from . import audit, metrics, ratelimit, store
 from .auth import authenticate, create_token, decode_token
 from .config import (
     ASK_RATE_PER_MIN,
@@ -35,6 +35,11 @@ app = FastAPI(
 )
 
 WARM = {"done": False}
+
+
+@app.on_event("startup")
+def init_store():
+    store.init_db()
 
 
 @app.on_event("startup")
@@ -255,6 +260,55 @@ def prometheus_metrics():
     from fastapi.responses import PlainTextResponse
 
     return PlainTextResponse(metrics.render())
+
+
+# --- Server-side conversations (batch D) ----------------------------------
+
+class SaveConversationRequest(BaseModel):
+    collection: str | None = None
+    title: str = Field(default="对话", max_length=80)
+    messages: list[dict] = Field(description="[{role, content, sources?}]")
+
+
+@app.get("/conversations")
+def conversations_list(ident: dict = Depends(require_user)):
+    return store.list_conversations(ident["user"])
+
+
+@app.get("/conversations/{cid}")
+def conversation_get(cid: int, ident: dict = Depends(require_user)):
+    msgs = store.get_messages(cid, ident["user"])
+    if msgs is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"id": cid, "messages": msgs}
+
+
+@app.post("/conversations")
+def conversation_save(req: SaveConversationRequest, ident: dict = Depends(require_user)):
+    cid = store.create_conversation(ident["user"], req.collection or COLLECTION_NAME,
+                                    req.title)
+    for m in req.messages:
+        if m.get("role") in ("user", "assistant") and m.get("content"):
+            store.add_message(cid, m["role"], m["content"][:8000], m.get("sources"))
+    return {"id": cid}
+
+
+@app.delete("/conversations/{cid}")
+def conversation_delete(cid: int, ident: dict = Depends(require_user)):
+    if not store.delete_conversation(cid, ident["user"]):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"deleted": cid}
+
+
+@app.get("/conversations/{cid}/export")
+def conversation_export(cid: int, ident: dict = Depends(require_user)):
+    md = store.export_markdown(cid, ident["user"])
+    if md is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    from fastapi.responses import PlainTextResponse
+
+    return PlainTextResponse(md, media_type="text/markdown",
+                             headers={"Content-Disposition": f'attachment; filename="conversation-{cid}.md"'})
 
 
 @app.post("/search", response_model=list[SearchHit])
