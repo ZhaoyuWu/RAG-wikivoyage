@@ -7,7 +7,17 @@ Two providers, selected via LLM_PROVIDER:
 
 import os
 
-from .config import CLAUDE_MODEL, LLM_PROVIDER, OLLAMA_MODEL, OLLAMA_URL
+from .config import (
+    CLAUDE_MODEL,
+    CLOUD_COLLECTIONS,
+    COLLECTION_NAME,
+    GROQ_API_KEY,
+    GROQ_MODEL,
+    GROQ_URL,
+    LLM_PROVIDER,
+    OLLAMA_MODEL,
+    OLLAMA_URL,
+)
 from .retrieval import Hit, hybrid_search
 
 SYSTEM_PROMPT = (
@@ -165,6 +175,62 @@ def _stream_anthropic(context: str | None, question: str,
         yield from stream.text_stream
 
 
+def _stream_groq(context: str | None, question: str,
+                 history: list[dict] | None = None, system: str = SYSTEM_PROMPT):
+    """Yield answer text deltas from Groq's OpenAI-compatible API."""
+    import json as _json
+
+    import httpx
+
+    payload = {
+        "model": GROQ_MODEL,
+        "stream": True,
+        "temperature": 0.2,
+        "messages": _chat_messages(context, question, history, system),
+    }
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
+    try:
+        with httpx.stream("POST", f"{GROQ_URL}/chat/completions",
+                          json=payload, headers=headers, timeout=60.0) as r:
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data = line[len("data: "):]
+                if data == "[DONE]":
+                    break
+                delta = (_json.loads(data)["choices"][0]
+                         .get("delta", {}).get("content"))
+                if delta:
+                    yield delta
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(
+            f"Groq API error {e.response.status_code} "
+            f"({'rate limited' if e.response.status_code == 429 else 'request failed'})"
+        )
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"Groq unreachable: {e}")
+
+
+def _local_provider():
+    """The configured non-cloud provider (ollama or anthropic)."""
+    if LLM_PROVIDER == "ollama":
+        return "ollama", OLLAMA_MODEL, _stream_ollama
+    return "anthropic", CLAUDE_MODEL, _stream_anthropic
+
+
+def _pick_provider(collection: str | None):
+    """Return (name, model, stream_fn) for a collection.
+
+    Public-data collections go to the fast cloud model when a key is set;
+    private collections always stay on the local provider.
+    """
+    resolved = collection or COLLECTION_NAME
+    if GROQ_API_KEY and resolved in CLOUD_COLLECTIONS:
+        return "groq", GROQ_MODEL, _stream_groq
+    return _local_provider()
+
+
 _ANAPHORA = ("那", "这", "它", "他", "她", "呢", "此", "还有", "继续", "上面",
              "刚才", "之前", "the same", "there", "it ", "that ", "dort", "das")
 
@@ -180,7 +246,7 @@ def _needs_rewrite(question: str, history: list[dict]) -> bool:
     return any(marker in question or marker in lowered for marker in _ANAPHORA)
 
 
-def _rewrite_query(question: str, history: list[dict]) -> str:
+def _rewrite_query(question: str, history: list[dict], generate=None) -> str:
     """Condense a follow-up into a standalone search query via the LLM."""
     recent = history[-4:]
     convo = "\n".join(f"{m['role']}: {m['content'][:300]}" for m in recent)
@@ -191,11 +257,18 @@ def _rewrite_query(question: str, history: list[dict]) -> str:
         "names and places from the context. Reply with the query only, in the "
         "language of the follow-up."
     )
-    generate = _stream_ollama if LLM_PROVIDER == "ollama" else _stream_anthropic
+    if generate is None:
+        generate = _local_provider()[2]
     rewrite_system = ("You rewrite follow-up questions into standalone search "
                       "queries. Reply with the query only, nothing else.")
     try:
-        rewritten = "".join(generate(None, prompt, None, rewrite_system)).strip()
+        try:
+            rewritten = "".join(generate(None, prompt, None, rewrite_system)).strip()
+        except RuntimeError:
+            fallback = _local_provider()[2]
+            if generate is fallback:
+                raise
+            rewritten = "".join(fallback(None, prompt, None, rewrite_system)).strip()
         # Guard against a chatty model: keep it only if it looks like a query.
         rewritten = rewritten.split("来源")[0].split("Source:")[0].strip().strip('"')
         if 0 < len(rewritten) < 200 and "\n" not in rewritten:
@@ -239,10 +312,12 @@ def ask_stream(
         yield {"type": "done", "answer": answer, "sources": [], "trace": None}
         return
 
+    provider, model, generate = _pick_provider(collection)
+
     search_query = question
     if _needs_rewrite(question, history):
         t_r = time.perf_counter()
-        search_query = _rewrite_query(question, history)
+        search_query = _rewrite_query(question, history, generate)
         if search_query != question:
             yield {"type": "rewrite", "query": search_query,
                    "rewrite_s": round(time.perf_counter() - t_r, 1)}
@@ -262,14 +337,23 @@ def ask_stream(
         return
 
     context = build_context(hits)
-    model = OLLAMA_MODEL if LLM_PROVIDER == "ollama" else CLAUDE_MODEL
-    generate = _stream_ollama if LLM_PROVIDER == "ollama" else _stream_anthropic
 
     t1 = time.perf_counter()
     parts: list[str] = []
-    for delta in generate(context, question, history):
-        parts.append(delta)
-        yield {"type": "delta", "text": delta}
+    try:
+        for delta in generate(context, question, history):
+            parts.append(delta)
+            yield {"type": "delta", "text": delta}
+    except RuntimeError as e:
+        # Cloud outage or rate limit: retry locally if nothing streamed yet.
+        if provider == "groq" and not parts:
+            provider, model, generate = _local_provider()
+            yield {"type": "fallback", "detail": str(e), "provider": provider}
+            for delta in generate(context, question, history):
+                parts.append(delta)
+                yield {"type": "delta", "text": delta}
+        else:
+            raise
     generation_s = round(time.perf_counter() - t1, 1)
 
     yield {
@@ -277,7 +361,7 @@ def ask_stream(
         "answer": "".join(parts),
         "sources": [{"file": h.file, "heading": h.heading, "score": h.score} for h in hits],
         "trace": {
-            "provider": LLM_PROVIDER,
+            "provider": provider,
             "model": model,
             "retrieval_ms": retrieval_ms,
             "generation_s": generation_s,

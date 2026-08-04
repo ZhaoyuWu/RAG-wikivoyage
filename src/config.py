@@ -58,6 +58,17 @@ CLAUDE_MODEL = "claude-sonnet-5"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b-instruct")
 
+# Optional cloud acceleration via Groq's free tier. Collections listed in
+# CLOUD_COLLECTIONS hold public data only and may be answered by the cloud
+# model; everything else stays on the local provider regardless of the key.
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_URL = "https://api.groq.com/openai/v1"
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+CLOUD_COLLECTIONS = {
+    c.strip() for c in os.environ.get("CLOUD_COLLECTIONS", "wikivoyage").split(",")
+    if c.strip()
+}
+
 
 def utf8_stdout() -> None:
     """Force UTF-8 console output; Windows defaults to cp1252 which cannot
