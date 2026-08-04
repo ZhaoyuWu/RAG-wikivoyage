@@ -233,7 +233,7 @@ async function runRoute() {
   status(`${d.from.name} → ${d.to.name}, ${d.options.length} option(s)`);
 }
 
-function renderRouteResult(d, container) {
+function renderRouteCards(d, container) {
   container.innerHTML = d.options.map(o => `
     <div class="card">
       <div class="opt">
@@ -244,6 +244,10 @@ function renderRouteResult(d, container) {
       ${(o.legs || []).map(l =>
         `<div class="src">• ${esc(l.line)}: ${esc(l.from)} → ${esc(l.to)}</div>`).join("")}
     </div>`).join("");
+}
+
+function renderRouteResult(d, container) {
+  renderRouteCards(d, container);
 
   ensureMap();
   routeLayer.clearLayers();
@@ -272,6 +276,31 @@ function traceSummaryLine(t) {
 
 let chatHistory = [];
 
+// Conversation persistence: completed turns live in localStorage so a
+// refresh restores the chat. Cleared by ↺ New or a collection switch.
+const CHAT_KEY = "vaultrag_chat";
+const PREF_KEY = "vaultrag_prefs";
+let savedTurns = [];
+
+function saveChat() {
+  try {
+    localStorage.setItem(CHAT_KEY, JSON.stringify({
+      collection: $("collection").value, turns: savedTurns.slice(-30),
+    }));
+  } catch { /* storage full or blocked: persistence is best-effort */ }
+}
+
+function savePrefs() {
+  const mode = document.querySelector("input[name=mode]:checked").value;
+  localStorage.setItem(PREF_KEY,
+    JSON.stringify({ mode, collection: $("collection").value }));
+}
+
+function loadJSON(key) {
+  try { return JSON.parse(localStorage.getItem(key)) || {}; }
+  catch { return {}; }
+}
+
 function el(tag, cls, html) {
   const node = document.createElement(tag);
   if (cls) node.className = cls;
@@ -279,13 +308,10 @@ function el(tag, cls, html) {
   return node;
 }
 
-async function runAskStream(body, t0) {
-  // Chat style: newest turn first. Each turn is one wrapper holding the
-  // user bubble and its answer block, prepended above older turns.
-  const results = $("results");
+function newTurn(query) {
   const turn = el("div");
   turn.innerHTML = `
-    <div class="card bubble-user"><p>${esc(body.query)}</p></div>
+    <div class="card bubble-user"><p>${esc(query)}</p></div>
     <details class="trace" open>
       <summary>How this answer is being made</summary>
       <div class="src t-stats" style="margin:.6rem 0">Retrieving…</div>
@@ -294,8 +320,68 @@ async function runAskStream(body, t0) {
     <div class="card t-answer" style="display:none"><p></p></div>
     <div class="card t-sources" style="display:none"></div>
     <div class="t-route"></div>`;
-  results.prepend(turn);
+  return turn;
+}
+
+function chunkCards(chunks) {
+  return chunks.map(c => `
+    <div class="card">
+      <div class="meta">
+        <span class="score">${c.score.toFixed(3)}</span>
+        <span class="src">${esc(c.file)} :: ${esc(c.heading)}</span>
+      </div>
+      <p>${esc(c.text)}</p>
+    </div>`).join("");
+}
+
+function sourceLines(sources) {
+  return sources.map(s =>
+    `<div class="src">• ${esc(s.file)} :: ${esc(s.heading)}</div>`).join("");
+}
+
+function restoreTurn(t) {
+  const turn = newTurn(t.query);
+  const details = turn.querySelector("details");
+  details.removeAttribute("open");
+  details.querySelector("summary").textContent = "How this answer was made";
+  turn.querySelector(".t-stats").innerHTML = t.trace ? traceSummaryLine(t.trace) : "";
+  if (t.trace && t.trace.chunks)
+    turn.querySelector(".t-chunks").innerHTML = chunkCards(t.trace.chunks);
+  if (t.answer) {
+    const a = turn.querySelector(".t-answer");
+    a.style.display = "";
+    a.querySelector("p").textContent = t.answer;
+  }
+  if (t.sources && t.sources.length) {
+    const sc = turn.querySelector(".t-sources");
+    sc.style.display = "";
+    sc.innerHTML = sourceLines(t.sources);
+  }
+  if (t.route) renderRouteCards(t.route, turn.querySelector(".t-route"));
+  $("results").prepend(turn);
+}
+
+function restoreChat() {
+  const saved = loadJSON(CHAT_KEY);
+  if (!saved.turns || saved.collection !== $("collection").value) return;
+  savedTurns = saved.turns;
+  for (const t of savedTurns) {
+    restoreTurn(t);
+    if (t.answer) {
+      chatHistory.push({ role: "user", content: t.query });
+      chatHistory.push({ role: "assistant", content: t.answer.slice(0, 2000) });
+    }
+  }
+  if (savedTurns.length) status(`Restored ${savedTurns.length} turn(s).`);
+}
+
+async function runAskStream(body, t0) {
+  // Chat style: newest turn first. Each turn is one wrapper holding the
+  // user bubble and its answer block, prepended above older turns.
+  const turn = newTurn(body.query);
+  $("results").prepend(turn);
   turn.scrollIntoView({ behavior: "smooth", block: "start" });
+  let turnRoute = null;
 
   const stats = turn.querySelector(".t-stats");
   const answerCard = turn.querySelector(".t-answer");
@@ -336,20 +422,14 @@ async function runAskStream(body, t0) {
           const prefix = stats.innerHTML.startsWith("Follow-up") ? stats.innerHTML.split(" — ")[0] + " — " : "";
           stats.innerHTML = prefix +
             `retrieved <b>${ev.chunks.length}</b> chunks in <b>${ev.retrieval_ms} ms</b>, the model is now reading them…`;
-          turn.querySelector(".t-chunks").innerHTML = ev.chunks.map(c => `
-            <div class="card">
-              <div class="meta">
-                <span class="score">${c.score.toFixed(3)}</span>
-                <span class="src">${esc(c.file)} :: ${esc(c.heading)}</span>
-              </div>
-              <p>${esc(c.text)}</p>
-            </div>`).join("");
+          turn.querySelector(".t-chunks").innerHTML = chunkCards(ev.chunks);
         } else if (ev.type === "fallback") {
           stats.innerHTML += ` — cloud model unavailable (${esc(ev.detail)}), falling back to local <b>${esc(ev.provider)}</b>…`;
         } else if (ev.type === "delta") {
           answerCard.style.display = "";
           answerText.textContent += ev.text;
         } else if (ev.type === "route") {
+          turnRoute = ev.data;
           renderRouteResult(ev.data, turn.querySelector(".t-route"));
         } else if (ev.type === "done") {
           clearInterval(timer);
@@ -358,8 +438,7 @@ async function runAskStream(body, t0) {
           if (ev.sources.length) {
             const sc = turn.querySelector(".t-sources");
             sc.style.display = "";
-            sc.innerHTML = ev.sources.map(s =>
-              `<div class="src">• ${esc(s.file)} :: ${esc(s.heading)}</div>`).join("");
+            sc.innerHTML = sourceLines(ev.sources);
           }
           details.removeAttribute("open");
           details.querySelector("summary").textContent = "How this answer was made";
@@ -367,6 +446,9 @@ async function runAskStream(body, t0) {
           status(`Done in ${((Date.now()-t0)/1000).toFixed(1)}s`);
           chatHistory.push({ role: "user", content: body.query });
           chatHistory.push({ role: "assistant", content: ev.answer.slice(0, 2000) });
+          savedTurns.push({ query: body.query, answer: ev.answer,
+                            sources: ev.sources, trace: ev.trace, route: turnRoute });
+          saveChat();
           $("query").value = "";
         } else if (ev.type === "error") {
           throw new Error(ev.detail);
@@ -458,13 +540,31 @@ $("radius").onchange = () => {
 
 function resetChat() {
   chatHistory = [];
+  savedTurns = [];
+  localStorage.removeItem(CHAT_KEY);
   $("results").innerHTML = "";
   status("New conversation.");
 }
 $("newchat").onclick = resetChat;
-$("collection").addEventListener("change", resetChat);
+$("collection").addEventListener("change", () => { resetChat(); savePrefs(); });
+document.querySelectorAll("input[name=mode]").forEach(r =>
+  r.addEventListener("change", savePrefs));
 
-loadCollections();
+async function init() {
+  const prefs = loadJSON(PREF_KEY);
+  if (prefs.mode) {
+    const radio = document.querySelector(`input[name=mode][value="${prefs.mode}"]`);
+    if (radio && !radio.checked) radio.click();
+  }
+  await loadCollections();
+  // Setting the value directly avoids the change handler, which resets the chat.
+  if (prefs.collection &&
+      [...$("collection").options].some(o => o.value === prefs.collection)) {
+    $("collection").value = prefs.collection;
+  }
+  restoreChat();
+}
+init();
 </script>
 </body>
 </html>
