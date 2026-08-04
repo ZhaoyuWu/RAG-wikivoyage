@@ -162,10 +162,15 @@ def hybrid_search(
     hits = _to_hits(result.points)
 
     if rerank and hits:
-        scores = _reranker().predict([(query, f"{h.heading}\n{h.text}") for h in hits])
+        import math
+
+        raw = _reranker().predict([(query, f"{h.heading}\n{h.text}") for h in hits])
+        # Sigmoid turns the cross-encoder logits into calibrated 0-1
+        # relevance, which RRF's rank-only fusion cannot provide.
+        scores = [1 / (1 + math.exp(-float(s))) for s in raw]
         hits = [h for _, h in sorted(zip(scores, hits), key=lambda x: -x[0])]
         for score, hit in zip(sorted(scores, reverse=True), hits):
-            hit.score = float(score)
+            hit.score = score
         hits = hits[:top_k]
     return hits
 

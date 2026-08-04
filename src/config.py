@@ -46,6 +46,10 @@ DENSE_DIM = 1024
 SPARSE_MODEL = "Qdrant/bm25"           # BM25 sparse vectors via fastembed
 RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 USE_RERANKER = os.environ.get("USE_RERANKER", "0") == "1"
+# Rerank scores pass through a sigmoid; below this the corpus is treated
+# as not covering the question (refuse for private notes, fall back to
+# model knowledge for the travel corpus).
+RERANK_MIN_SCORE = float(os.environ.get("RERANK_MIN_SCORE", "0.3"))
 
 # Chunking
 MIN_CHUNK_CHARS = 80

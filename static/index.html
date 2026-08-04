@@ -466,6 +466,10 @@ async function runAskStream(body, t0) {
           turn.querySelector(".t-chunks").innerHTML = chunkCards(ev.chunks);
         } else if (ev.type === "fallback") {
           stats.innerHTML += ` — cloud model unavailable (${esc(ev.detail)}), falling back to local <b>${esc(ev.provider)}</b>…`;
+        } else if (ev.type === "guard") {
+          stats.innerHTML = `⛔ Blocked by the input guard (${esc(ev.tier)}): ${esc(ev.reason)}`;
+        } else if (ev.type === "low_confidence") {
+          stats.innerHTML += ` — top relevance <b>${ev.top_score}</b> is below the ${ev.threshold} threshold, the corpus does not cover this…`;
         } else if (ev.type === "delta") {
           answerCard.style.display = "";
           answerText.textContent += ev.text;
