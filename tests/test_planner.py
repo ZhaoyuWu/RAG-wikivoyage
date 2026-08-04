@@ -141,6 +141,26 @@ def test_days_from_text():
     assert planner._days_from_text("没有天数") is None
 
 
+def test_point_to_segment_endpoints_and_middle():
+    a = {"lat": 51.0, "lon": 7.0}
+    b = {"lat": 51.0, "lon": 8.0}
+    # A point on the segment is ~0 km away.
+    on = {"lat": 51.0, "lon": 7.5}
+    assert planner._point_to_segment_km(on, a, b) < 1
+    # A point due north of the midpoint is offset only by latitude.
+    off = {"lat": 51.5, "lon": 7.5}
+    d = planner._point_to_segment_km(off, a, b)
+    assert 50 < d < 60  # ~0.5 deg lat ≈ 55 km
+
+
+def test_min_dist_to_route_picks_nearest_segment():
+    line = [[7.0, 51.0], [8.0, 51.0], [9.0, 51.0]]  # [lon, lat] along 51°N
+    near = {"lat": 51.05, "lon": 8.5}
+    far = {"lat": 52.0, "lon": 8.5}
+    assert planner._min_dist_to_route(near, line) < planner._min_dist_to_route(far, line)
+    assert planner._min_dist_to_route(near, line) < 10
+
+
 def test_parse_constraints_rejects_unresolvable_origin():
     def fake_generate(context, question, history, system):
         yield '{"origin": "Atlantis", "days": 1, "likes": [], "excludes": []}'

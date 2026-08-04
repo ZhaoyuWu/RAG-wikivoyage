@@ -602,8 +602,17 @@ async function runPlanStream(body, t0) {
           }
           turn.querySelector("details").removeAttribute("open");
           turn.querySelector("summary").textContent = "How this itinerary was planned";
-          if (ev.trace) stats.innerHTML = `Planned a ${ev.trace.stops}-stop day from ${ev.trace.candidates} candidates, ${Math.floor(ev.trace.total_travel_min/60)}h ${ev.trace.total_travel_min%60}m total travel, via ${esc(ev.trace.provider)}/${esc(ev.trace.model)}.`;
+          if (ev.trace) {
+            const days = ev.trace.days || 1;
+            stats.innerHTML = `Planned ${days} day(s), ${ev.trace.stops} stops from ${ev.trace.candidates} candidates, ${Math.floor(ev.trace.total_travel_min/60)}h ${ev.trace.total_travel_min%60}m total travel, via ${esc(ev.trace.provider)}/${esc(ev.trace.model)}.`;
+          }
           status(`Done in ${((Date.now()-t0)/1000).toFixed(1)}s`);
+          // Make the itinerary saveable/exportable like a conversation.
+          savedTurns.push({
+            query: body.query, answer: ev.answer,
+            sources: (ev.stops || []).map(s => ({ file: s.file, heading: s.heading })),
+          });
+          saveChat();
           $("query").value = "";
         } else if (ev.type === "error") {
           throw new Error(ev.detail);
@@ -726,7 +735,20 @@ async function saveConversation() {
     body: JSON.stringify({ collection: $("collection").value, title, messages }),
   });
   const d = await resp.json();
-  status(`Saved as conversation #${d.id}.`);
+  // Offer the markdown export so a plan or chat can flow back into the vault.
+  const url = "/conversations/" + d.id + "/export";
+  $("status").innerHTML = `Saved as #${d.id}. ` +
+    `<a href="#" id="exportlink">Export markdown</a> to fold it back into your notes.`;
+  const link = document.getElementById("exportlink");
+  if (link) link.onclick = async (e) => {
+    e.preventDefault();
+    const r = await api(url);
+    const blob = await r.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `plan-${d.id}.md`;
+    a.click();
+  };
   loadHistory();
 }
 

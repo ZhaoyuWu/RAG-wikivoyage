@@ -251,21 +251,104 @@ def order_stops(origin_geo: dict, candidates: list[dict],
     return chain
 
 
+def _one_leg(frm: str, to: str, mode: str) -> dict:
+    leg = {"from": frm, "to": to, "duration_min": None}
+    try:
+        result = route(frm, to, mode)
+        leg["duration_min"] = min(o["duration_min"] for o in result["options"])
+    except (LookupError, RuntimeError):
+        pass
+    return leg
+
+
 def leg_durations(origin: str, stops: list[dict], mode: str) -> list[dict]:
-    """Real travel time for each hop (origin -> s1 -> s2 -> ...). A hop that
-    the routing backend cannot resolve is marked unknown, not fatal."""
-    legs = []
-    prev = origin
-    for stop in stops:
-        leg = {"from": prev, "to": stop["file"], "duration_min": None}
-        try:
-            result = route(prev, stop["file"], mode)
-            leg["duration_min"] = min(o["duration_min"] for o in result["options"])
-        except (LookupError, RuntimeError):
-            pass
-        legs.append(leg)
-        prev = stop["file"]
-    return legs
+    """Real travel time for each hop (origin -> s1 -> s2 -> ...). Hops are
+    independent, so they are routed concurrently — the transit backend is
+    the slow part, and a 4-stop day serialized costs 4x a single call. A hop
+    the backend cannot resolve is marked unknown, not fatal."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    places = [origin] + [s["file"] for s in stops]
+    hops = [(places[i], places[i + 1]) for i in range(len(stops))]
+    if not hops:
+        return []
+    with ThreadPoolExecutor(max_workers=min(6, len(hops))) as pool:
+        return list(pool.map(lambda h: _one_leg(h[0], h[1], mode), hops))
+
+
+def _point_to_segment_km(p: dict, a: dict, b: dict) -> float:
+    """Approximate distance from point p to segment a-b, in km, using a local
+    equirectangular projection (fine at country scale)."""
+    import math as _m
+
+    lat0 = _m.radians((a["lat"] + b["lat"]) / 2)
+    kx = 111.32 * _m.cos(lat0)  # km per degree lon at this latitude
+    ky = 110.57                 # km per degree lat
+    ax, ay = a["lon"] * kx, a["lat"] * ky
+    bx, by = b["lon"] * kx, b["lat"] * ky
+    px, py = p["lon"] * kx, p["lat"] * ky
+    dx, dy = bx - ax, by - ay
+    seg2 = dx * dx + dy * dy
+    if seg2 == 0:
+        return _m.hypot(px - ax, py - ay)
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / seg2))
+    cx, cy = ax + t * dx, ay + t * dy
+    return _m.hypot(px - cx, py - cy)
+
+
+def _min_dist_to_route(geo: dict, line: list[list[float]]) -> float:
+    """Shortest distance from a point to a route polyline (list of [lon,lat])."""
+    p = {"lat": geo["lat"], "lon": geo["lon"]}
+    best = float("inf")
+    for i in range(len(line) - 1):
+        a = {"lon": line[i][0], "lat": line[i][1]}
+        b = {"lon": line[i + 1][0], "lat": line[i + 1][1]}
+        best = min(best, _point_to_segment_km(p, a, b))
+    return best
+
+
+def along_route(from_place: str, to_place: str, interests: list[str],
+                corridor_km: float = 25.0, top_n: int = 5) -> dict:
+    """Stops worth a detour on the drive from A to B.
+
+    Drives the route (OSRM geometry), then for each interest retrieves
+    geotagged candidates and keeps those within corridor_km of the line,
+    ranked by how little they stray from it. Reuses the same geo+heading
+    retrieval as the day planner.
+    """
+    result = route(from_place, to_place, "car")
+    geom = result.get("geometry")
+    if not geom or geom.get("type") != "LineString":
+        raise RuntimeError("驾车路线没有几何信息,无法做走廊推荐")
+    line = geom["coordinates"]
+
+    frm, to = result["from"], result["to"]
+    mid = {"lat": (frm["lat"] + to["lat"]) / 2, "lon": (frm["lon"] + to["lon"]) / 2}
+    # Radius that comfortably covers the corridor from the route's midpoint.
+    span_km = _haversine_km(frm, to)
+    geo = {"lat": mid["lat"], "lon": mid["lon"], "radius_km": span_km / 2 + corridor_km}
+
+    by_file: dict[str, dict] = {}
+    for like in interests or ["景点"]:
+        heading = _heading_for(like)
+        hits = hybrid_search(like, top_k=15, collection=PLANNER_COLLECTION, geo=geo,
+                             headings=[heading] if heading else None)
+        for h in hits:
+            if not h.geo:
+                continue
+            detour = _min_dist_to_route(h.geo, line)
+            if detour > corridor_km:
+                continue
+            prev = by_file.get(h.file)
+            if prev is None or detour < prev["detour_km"]:
+                by_file[h.file] = {
+                    "file": h.file, "heading": h.heading, "geo": h.geo,
+                    "detour_km": round(detour, 1), "text": h.text[:200],
+                    "interest": like,
+                }
+    stops = sorted(by_file.values(), key=lambda c: c["detour_km"])[:top_n]
+    return {"from": frm, "to": to, "geometry": geom,
+            "corridor_km": corridor_km, "stops": stops}
 
 
 # A multi-day trip can reach farther than a day trip, so the search radius

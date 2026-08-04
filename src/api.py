@@ -371,6 +371,40 @@ class PlanRequest(BaseModel):
     }
 
 
+class AlongRouteRequest(BaseModel):
+    from_place: str = Field(min_length=1, description="Start, e.g. Essen")
+    to_place: str = Field(min_length=1, description="Destination, e.g. Berlin")
+    interests: list[str] = Field(default_factory=list,
+                                 description="e.g. ['城堡', '美食']")
+    corridor_km: float = Field(default=25.0, gt=0, le=100)
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{"from_place": "Essen", "to_place": "Berlin",
+                          "interests": ["景点"]}]
+        }
+    }
+
+
+@app.post("/plan/along")
+def plan_along_endpoint(req: AlongRouteRequest, ident: dict = Depends(require_user)):
+    """Detour-worthy stops along the drive from A to B."""
+    from .planner import along_route
+
+    _enforce_rate(ident, "ask", ASK_RATE_PER_MIN)
+    try:
+        result = along_route(req.from_place, req.to_place, req.interests,
+                             corridor_km=req.corridor_km)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    audit.log_event({"event": "along_route", "user": ident["user"],
+                     "from": req.from_place, "to": req.to_place,
+                     "stops": [s["file"] for s in result["stops"]]})
+    return result
+
+
 @app.post("/plan/stream")
 def plan_stream_endpoint(req: PlanRequest, ident: dict = Depends(require_user)):
     """Server-sent events: parse the request, retrieve candidates, cluster
