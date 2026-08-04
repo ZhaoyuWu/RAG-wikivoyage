@@ -315,7 +315,11 @@ def ask_stream(
     provider, model, generate = _pick_provider(collection)
 
     search_query = question
-    if _needs_rewrite(question, history):
+    # The cloud model rewrites in well under a second, so every follow-up
+    # gets context restored; the slow local model keeps the cheap heuristic.
+    rewrite = bool(history) if provider == "groq" \
+        else _needs_rewrite(question, history)
+    if rewrite:
         t_r = time.perf_counter()
         search_query = _rewrite_query(question, history, generate)
         if search_query != question:
