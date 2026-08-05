@@ -155,6 +155,11 @@ def hybrid_search(
     if rerank is None:
         rerank = USE_RERANKER
 
+    # Rescue transliterated place names ("杜塞尔多夫" -> +"Düsseldorf") so the
+    # sparse leg gets a German token to match. No-op when nothing matches.
+    from .aliases import expand_query
+    query = expand_query(query)
+
     dense_vec = _dense_model().encode(query, normalize_embeddings=True).tolist()
     sparse_raw = next(iter(_sparse_model().embed([query])))
     sparse_vec = models.SparseVector(

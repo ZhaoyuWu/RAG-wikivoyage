@@ -140,7 +140,7 @@ Measured example, query `"Riester 值得买吗"` (a German pension product name)
 
 With dense vectors alone, an irrelevant hiking note scores within 0.0001 of a correct hit, so a slightly different query flips the ranking. The BM25 leg matches the literal token "Riester" and the fusion separates the correct chunks decisively.
 
-The flip side, also measured: cross-language retrieval weakens on transliterated proper nouns. "哈茨山区" (the Chinese transliteration of Harz) does not anchor to the region, while keeping the original spelling ("Harz 地区有哪些城堡") retrieves correctly, because the BM25 leg gets an exact token to match. Known limitation, honest fix: keep proper nouns in their original script.
+The flip side, first measured then fixed: cross-language retrieval weakened on transliterated proper nouns. "哈茨山区" (the Chinese transliteration of Harz) did not anchor to the region, because the BM25 leg had no German token to match. The eval quantified the damage — transliterated place names were the main drag, holding hit rate at 56%. The fix (`src/aliases.py`) appends the German spelling of any known transliteration to the query, so BM25 gets its exact token back. Golden-set hit rate went from 56% to 100%. It is a deterministic lookup table, not a model guess — proper-noun mapping is knowledge, not inference.
 
 ## Scaling case study: 371 to 49,460 chunks
 
