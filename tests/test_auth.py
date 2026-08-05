@@ -3,7 +3,8 @@
 import os
 import time
 
-os.environ.setdefault("JWT_SECRET", "test-secret-for-unit-tests")
+# 32+ bytes so PyJWT does not warn about a short HMAC key (RFC 7518 §3.2).
+os.environ.setdefault("JWT_SECRET", "test-secret-for-unit-tests-0123456789")
 
 from src import ratelimit
 from src.auth import (
