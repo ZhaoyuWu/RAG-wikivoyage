@@ -19,3 +19,6 @@ logs/
 
 # Eval history (regenerated per run)
 eval/history/
+
+# MCP config contains personal absolute paths
+mcp-config-example.json

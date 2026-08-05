@@ -9,6 +9,9 @@ prefect>=3.0
 mwparserfromhell>=0.6
 pyjwt>=2.8
 
+# Optional: expose the corpus to MCP clients (Claude Desktop) via src/mcp_server.py
+mcp>=2.0
+
 # Dev / CI
 pytest>=8.0
 ruff>=0.6

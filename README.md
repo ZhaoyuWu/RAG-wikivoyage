@@ -184,6 +184,33 @@ API contract:
 
 See [SECURITY.md](SECURITY.md) for the data boundaries and threat model.
 
+## MCP server
+
+The corpus is also exposed as an [MCP](https://modelcontextprotocol.io) server
+(`src/mcp_server.py`), so any MCP client — Claude Desktop, Claude Code — can
+call it as a tool. Two tools are published: `search_travel_corpus` (hybrid
+retrieval over the 49k-chunk index) and `route_a_to_b` (real travel times).
+This turns the project from a standalone web app into a tool an agent can
+reach for: ask Claude "where can I hike in Germany this weekend?" and it
+invokes the search tool and answers from grounded results.
+
+Register it with Claude Desktop by adding to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "vault-rag": {
+      "command": "/abs/path/to/vault-rag/venv/bin/python",
+      "args": ["-m", "src.mcp_server"],
+      "cwd": "/abs/path/to/vault-rag"
+    }
+  }
+}
+```
+
+It runs over stdio in its own process, so it holds the embedded Qdrant lock
+alone — don't run it while the web API is open on the same `qdrant_db`.
+
 ## Tech
 
 | Component | Choice |
