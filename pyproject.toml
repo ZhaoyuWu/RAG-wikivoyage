@@ -4,6 +4,9 @@
 # autodetection may not add the root, and every test fails to import.
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "perf: performance-regression guards (run with -m perf; deselect with -m 'not perf')",
+]
 
 [tool.ruff]
 line-length = 100

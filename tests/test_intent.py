@@ -6,7 +6,13 @@ tests stub geocode with a small allow-list so no real gazetteer is needed,
 and pin the tri-lingual patterns plus the car/transit split.
 """
 
-import src.intent as intent
+import pytest
+
+# intent.py imports from routing, which imports httpx at module load; skip
+# where the request stack isn't installed (lightweight CI job).
+pytest.importorskip("httpx", reason="routing's http stack not installed")
+
+import src.intent as intent  # noqa: E402
 
 KNOWN = {"essen", "berlin", "köln", "goslar", "hamburg"}
 

@@ -23,6 +23,9 @@ jobs:
         run: ruff check src tests eval
 
       # Unit tests only: the suite is designed to run without the vector
-      # store or any model download (chunking, auth, guard, metrics, store).
+      # store or any model download. Tests that need the heavier stack
+      # (fastapi, qdrant_client, httpx) importorskip themselves here.
+      # perf guards are deselected: a shared runner's load is too noisy for
+      # wall-clock assertions.
       - name: Unit tests
-        run: pytest tests/ -q
+        run: pytest tests/ -q -m "not perf"

@@ -10,10 +10,17 @@ sliding-window rate limiter returning 429.
 """
 
 import pytest
-from fastapi.testclient import TestClient
 
-from src import api, ratelimit
-from src.api import app, require_user
+# The app pulls in fastapi + the retrieval/routing stack at import; skip in
+# environments without them (the lightweight CI job installs only
+# ruff/pytest/pyjwt).
+pytest.importorskip("fastapi", reason="fastapi not installed")
+pytest.importorskip("qdrant_client", reason="vector stack not installed")
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from src import api, ratelimit  # noqa: E402
+from src.api import app, require_user  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

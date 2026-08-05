@@ -14,9 +14,13 @@ import types
 
 import pytest
 
-from qdrant_client import models
+# retrieval.py imports qdrant_client at module load; skip where it (and the
+# rest of the vector stack) isn't installed, e.g. the lightweight CI job.
+pytest.importorskip("qdrant_client", reason="vector stack not installed")
 
-from src.retrieval import Hit, _build_filter
+from qdrant_client import models  # noqa: E402
+
+from src.retrieval import Hit, _build_filter  # noqa: E402
 
 
 # --- _build_filter: retrieval-layer access control -----------------------
