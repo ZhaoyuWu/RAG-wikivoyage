@@ -64,10 +64,15 @@ def geocode(place: str) -> dict | None:
     return None
 
 
-def route_car(frm: dict, to: dict) -> dict:
-    """Driving route via the public OSRM demo server."""
+@lru_cache(maxsize=512)
+def _route_car_cached(frm_lon: float, frm_lat: float,
+                      to_lon: float, to_lat: float) -> dict:
+    """OSRM lookup keyed on rounded coordinates. Driving durations are
+    traffic-free estimates, so the same coordinates always give the same
+    route — safe to cache. Multi-day planning re-routes the same hops
+    repeatedly, so this turns most legs into cache hits."""
     url = (f"{OSRM_URL}/route/v1/driving/"
-           f"{frm['lon']},{frm['lat']};{to['lon']},{to['lat']}")
+           f"{frm_lon},{frm_lat};{to_lon},{to_lat}")
     resp = _get(url, params={"overview": "full", "geometries": "geojson"},
                      timeout=20.0)
     resp.raise_for_status()
@@ -84,6 +89,13 @@ def route_car(frm: dict, to: dict) -> dict:
         }],
         "geometry": r["geometry"],
     }
+
+
+def route_car(frm: dict, to: dict) -> dict:
+    """Driving route via the public OSRM demo server (cached by coordinates,
+    rounded to ~10 m so trivially different points still hit)."""
+    return _route_car_cached(round(frm["lon"], 4), round(frm["lat"], 4),
+                             round(to["lon"], 4), round(to["lat"], 4))
 
 
 def _db_station(query: str) -> dict:
