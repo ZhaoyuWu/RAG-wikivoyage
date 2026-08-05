@@ -5,6 +5,7 @@ Start with:
 """
 
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -28,22 +29,10 @@ from .routing import route
 
 utf8_stdout()  # Windows consoles default to cp1252; CJK paths crash prints
 
-app = FastAPI(
-    title="Vault RAG",
-    description="Hybrid retrieval + RAG over a personal Obsidian vault",
-    version="0.1.0",
-)
-
 WARM = {"done": False}
 
 
-@app.on_event("startup")
-def init_store():
-    store.init_db()
-
-
-@app.on_event("startup")
-def warmup():
+def _warmup() -> None:
     """Load embedding models, vector collections, and the local LLM in the
     background so the first real query does not pay the cold start."""
     import threading
@@ -64,6 +53,21 @@ def warmup():
         print("warmup complete", flush=True)
 
     threading.Thread(target=_warm, daemon=True).start()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    store.init_db()
+    _warmup()
+    yield
+
+
+app = FastAPI(
+    title="Vault RAG",
+    description="Hybrid retrieval + RAG over a personal Obsidian vault",
+    version="0.1.0",
+    lifespan=lifespan,
+)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
