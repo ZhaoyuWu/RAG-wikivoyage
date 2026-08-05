@@ -122,12 +122,16 @@
   </div>
   <div class="bar" id="routebar" style="display:none">
     <input type="text" id="from" placeholder="From (e.g. Essen)" size="16">
-    <input type="text" id="to" placeholder="To (e.g. Goslar)" size="16">
+    <input type="text" id="to" placeholder="To (e.g. Berlin)" size="16">
     <select id="rmode">
       <option value="transit">🚆 Train</option>
       <option value="car">🚗 Drive</option>
     </select>
     <input type="datetime-local" id="departure" title="Departure time (transit only, empty = now)">
+    <label id="alongwrap" title="Show detour-worthy stops along a drive (car only)">
+      <input type="checkbox" id="along"> 顺路看
+      <input type="text" id="alongwhat" placeholder="景点/城堡/美食" size="10" disabled>
+    </label>
     <button id="goroute">Go</button>
   </div>
 
@@ -262,8 +266,24 @@ async function runRoute() {
   const from_place = $("from").value.trim();
   const to_place = $("to").value.trim();
   if (!from_place || !to_place) { status("Enter both places.", true); return; }
-  status(`<span class="spin"></span>Routing…`);
   $("results").innerHTML = "";
+
+  if ($("along").checked) {          // detour-worthy stops along the drive
+    status(`<span class="spin"></span>Finding stops along the way…`);
+    const interests = $("alongwhat").value.trim().split(/[\s,，、]+/).filter(Boolean);
+    const resp = await api("/plan/along", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from_place, to_place,
+                             interests: interests.length ? interests : ["景点"] }),
+    });
+    const d = await resp.json();
+    if (!resp.ok) throw new Error(d.detail || resp.statusText);
+    renderAlongResult(d, $("results"));
+    status(`${d.from.name} → ${d.to.name}: ${d.stops.length} stop(s) within ${d.corridor_km} km of the route`);
+    return;
+  }
+
+  status(`<span class="spin"></span>Routing…`);
   const resp = await api("/route", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -275,6 +295,37 @@ async function runRoute() {
 
   renderRouteResult(d, $("results"));
   status(`${d.from.name} → ${d.to.name}, ${d.options.length} option(s)`);
+}
+
+function renderAlongResult(d, container) {
+  container.innerHTML = d.stops.length ? d.stops.map((s, i) => `
+    <div class="card">
+      <div class="opt">
+        <span class="dur">+${s.detour_km} km</span>
+        <span>${i + 1}. ${esc(s.file)}</span>
+        <span class="src">${esc(s.heading)}</span>
+      </div>
+      <p>${esc(s.text)}</p>
+    </div>`).join("")
+    : `<div class="card"><p>路线两侧没有找到符合的顺路点,试试放宽兴趣。</p></div>`;
+
+  ensureMap();
+  routeLayer.clearLayers();
+  poiLayer.clearLayers();
+  const a = L.marker([d.from.lat, d.from.lon]).bindPopup("出发: " + esc(d.from.name));
+  const b = L.marker([d.to.lat, d.to.lon]).bindPopup("到达: " + esc(d.to.name));
+  a.addTo(routeLayer); b.addTo(routeLayer);
+  if (d.geometry) {
+    L.geoJSON(d.geometry, { style: { color: "#2563eb", weight: 4 } }).addTo(routeLayer);
+  }
+  // Detour stops as distinct pins off the main line.
+  d.stops.forEach((s, i) => {
+    if (s.geo) L.marker([s.geo.lat, s.geo.lon])
+      .bindPopup(`${i + 1}. ${esc(s.file)} (+${s.detour_km} km)`).addTo(poiLayer);
+  });
+  const group = L.featureGroup([a, b,
+    ...d.stops.filter(s => s.geo).map(s => L.marker([s.geo.lat, s.geo.lon]))]);
+  map.fitBounds(group.getBounds().pad(0.2), { maxZoom: 11 });
 }
 
 function renderRouteCards(d, container) {
@@ -673,6 +724,15 @@ $("go").onclick = run;
 $("goroute").onclick = () => run();
 $("query").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
 $("to").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+
+// "顺路看" only makes sense for a drive (needs the route geometry). Ticking it
+// enables the interest box and forces car mode.
+$("along").addEventListener("change", e => {
+  $("alongwhat").disabled = !e.target.checked;
+  if (e.target.checked) { $("rmode").value = "car"; $("rmode").disabled = true; }
+  else { $("rmode").disabled = false; }
+});
+$("alongwhat").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
 
 document.querySelectorAll("input[name=mode]").forEach(r =>
   r.addEventListener("change", () => {
