@@ -176,6 +176,9 @@ API contract:
 - **Metrics & evaluation** — Prometheus `/metrics` (latency histogram,
   provider mix, guard blocks) and an offline golden-set eval measuring
   retrieval hit rate and LLM-judged faithfulness, run as a Prefect flow.
+  The eval drives real decisions: it measured the reranker lifting hit rate
+  from 56% to 80% (+24pp) at an ~8-10s/query CPU cost — so it ships opt-in,
+  not on by default.
 - **Server-side conversations** — SQLite store; a conversation can be
   exported to markdown and re-indexed into the vault.
 
