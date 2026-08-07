@@ -103,6 +103,7 @@
       <label><input type="radio" name="mode" value="ask"><span>Ask</span></label>
       <label><input type="radio" name="mode" value="route"><span>Route</span></label>
       <label><input type="radio" name="mode" value="plan"><span>🗺️ Plan</span></label>
+      <label><input type="radio" name="mode" value="reach"><span>🎨 Reach</span></label>
     </span>
     <input type="text" id="category" placeholder="category (optional)" size="14">
     <button id="geobtn" title="Filter results by map location">📍 near</button>
@@ -133,6 +134,11 @@
       <input type="text" id="alongwhat" placeholder="景点/城堡/美食" size="10" disabled>
     </label>
     <button id="goroute">Go</button>
+  </div>
+  <div class="bar" id="reachbar" style="display:none">
+    <input type="text" id="reachfrom" placeholder="Centre (e.g. Essen) — or click the map" size="20">
+    <span style="color:var(--muted); font-size:.85rem">drive-time reachability, 30 / 60 / 90 / 120 min</span>
+    <button id="goreach">Paint</button>
   </div>
 
   <div id="map"></div>
@@ -184,8 +190,12 @@ async function doLogin() {
 }
 
 // ---- Map ----
-let map = null, poiLayer = null, geoLayer = null, routeLayer = null;
+let map = null, poiLayer = null, geoLayer = null, routeLayer = null, reachLayer = null;
 let geoFilter = null, picking = false;
+
+// Reachability bands: nearest is greenest, farthest fades to amber-red.
+const REACH_COLORS = ["#16a34a", "#84cc16", "#f59e0b", "#ef4444"];
+const REACH_LABELS = ["≤30 min", "≤60 min", "≤90 min", "≤120 min"];
 
 function ensureMap() {
   $("map").style.display = "block";
@@ -197,7 +207,13 @@ function ensureMap() {
     poiLayer = L.layerGroup().addTo(map);
     geoLayer = L.layerGroup().addTo(map);
     routeLayer = L.layerGroup().addTo(map);
+    reachLayer = L.layerGroup().addTo(map);
     map.on("click", e => {
+      // In Reach mode, a map click sets the isochrone centre and paints.
+      if (document.querySelector("input[name=mode]:checked").value === "reach") {
+        runIsochrone({ lat: e.latlng.lat, lon: e.latlng.lng });
+        return;
+      }
       if (!picking) return;
       geoFilter = { lat: e.latlng.lat, lon: e.latlng.lng,
                     radius_km: parseFloat($("radius").value) };
@@ -214,6 +230,77 @@ function drawGeoFilter() {
   L.circle([geoFilter.lat, geoFilter.lon], { radius: geoFilter.radius_km * 1000,
     color: "#2563eb", weight: 1.5, fillOpacity: 0.06 }).addTo(geoLayer);
   L.marker([geoFilter.lat, geoFilter.lon]).addTo(geoLayer);
+}
+
+// ---- Reachability isochrone ----
+let reachLegend = null;
+
+function paintIsochrone(data) {
+  reachLayer.clearLayers();
+  // Each grid sample becomes a square sized to exactly meet its neighbours
+  // (half the grid spacing, from the backend), so the cells tile into
+  // continuous reachability bands instead of separate dots.
+  const dLat = (data.cell && data.cell.lat) || 0.17;
+  const dLon = (data.cell && data.cell.lon) || 0.25;
+  data.points.forEach(p => {
+    L.rectangle(
+      [[p.lat - dLat, p.lon - dLon], [p.lat + dLat, p.lon + dLon]],
+      { color: REACH_COLORS[p.band], weight: 0, fillColor: REACH_COLORS[p.band],
+        fillOpacity: 0.42 }
+    ).bindTooltip(`${p.minutes} min drive`).addTo(reachLayer);
+  });
+  const c = data.center;
+  L.marker([c.lat, c.lon]).bindTooltip(c.name || "centre", { permanent: false })
+    .addTo(reachLayer);
+  map.setView([c.lat, c.lon], 8);
+
+  // Legend, added once.
+  if (reachLegend) map.removeControl(reachLegend);
+  reachLegend = L.control({ position: "bottomright" });
+  reachLegend.onAdd = () => {
+    const div = L.DomUtil.create("div");
+    div.style.cssText = "background:var(--card); padding:.5rem .7rem; border-radius:8px;"
+      + "box-shadow:0 1px 6px rgba(0,0,0,.2); font-size:.8rem; line-height:1.6";
+    div.innerHTML = "<b>Drive time</b><br>" + REACH_LABELS.map((lab, i) =>
+      `<span style="display:inline-block;width:12px;height:12px;background:${REACH_COLORS[i]};`
+      + `border-radius:2px;margin-right:6px;vertical-align:middle"></span>${lab}`
+    ).join("<br>");
+    return div;
+  };
+  reachLegend.addTo(map);
+}
+
+async function runIsochrone(center) {
+  ensureMap();
+  const body = center
+    ? { lat: center.lat, lon: center.lon, grid_n: 14 }
+    : { place: $("reachfrom").value.trim(), grid_n: 14 };
+  if (!body.place && body.lat === undefined) {
+    status("Enter a centre place or click the map.", true);
+    return;
+  }
+  $("goreach").disabled = true;
+  status(`<span class="spin"></span>Painting reachability…`);
+  try {
+    const resp = await api("/isochrone", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || resp.statusText);
+    if (!data.points.length) {
+      status("No reachable area found — is the centre on the road network?", true);
+      return;
+    }
+    paintIsochrone(data);
+    $("reachfrom").value = data.center.name || $("reachfrom").value;
+    status(`Painted ${data.points.length} reachable cells from ${esc(data.center.name || "centre")}.`);
+  } catch (e) {
+    status("Error: " + esc(e.message), true);
+  } finally {
+    $("goreach").disabled = false;
+  }
 }
 
 function plotHits(hits) {
@@ -738,13 +825,23 @@ document.querySelectorAll("input[name=mode]").forEach(r =>
   r.addEventListener("change", () => {
     if (!r.checked) return;
     const isRoute = r.value === "route";
-    $("searchbar").style.display = isRoute ? "none" : "flex";
+    const isReach = r.value === "reach";
+    $("searchbar").style.display = (isRoute || isReach) ? "none" : "flex";
     $("routebar").style.display = isRoute ? "flex" : "none";
+    $("reachbar").style.display = isReach ? "flex" : "none";
     $("query").placeholder = r.value === "plan"
       ? "描述行程,如:从 Essen 出发一天,想看城堡和徒步,不要夜店"
       : "Type a question and press Enter";
-    if (isRoute || r.value === "plan") ensureMap();
+    if (isRoute || isReach || r.value === "plan") ensureMap();
+    // Leaving reach mode clears the paint so it doesn't linger over results.
+    if (!isReach && reachLayer) {
+      reachLayer.clearLayers();
+      if (reachLegend) { map.removeControl(reachLegend); reachLegend = null; }
+    }
   }));
+
+$("goreach").onclick = () => runIsochrone();
+$("reachfrom").addEventListener("keydown", e => { if (e.key === "Enter") runIsochrone(); });
 
 $("geobtn").onclick = () => {
   if (geoFilter || picking) {           // clear

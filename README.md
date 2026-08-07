@@ -39,6 +39,10 @@ The Route mode answers "how do I get from A to B and how long does it take". Pla
 
 ![Train routing Essen to Goslar](assets/route-transit.png)
 
+The Reach mode turns the routing backend into a picture: pick a centre (type a place or click the map) and it paints how far you can drive in 30 / 60 / 90 / 120 minutes. It samples a grid around the centre and asks OSRM for the driving time to every point in a single `/table` request, so a 14x14 grid costs one HTTP call, not 196. Each cell is coloured by its time band and sized to tile seamlessly into a continuous isochrone.
+
+![Drive-time reachability from Essen](assets/isochrone-essen.png)
+
 Boundary note: the AI pipeline (embedding, retrieval, generation) stays fully local. Map tiles and routing calls go to public services and carry only place names and coordinates, never corpus content.
 
 ## Architecture

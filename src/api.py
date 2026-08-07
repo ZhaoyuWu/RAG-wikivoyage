@@ -25,7 +25,7 @@ from .config import (
 )
 from .rag import ask, ask_stream
 from .retrieval import hybrid_search
-from .routing import route
+from .routing import geocode, route
 
 utf8_stdout()  # Windows consoles default to cp1252; CJK paths crash prints
 
@@ -357,6 +357,43 @@ def route_endpoint(req: RouteRequest, ident: dict = Depends(require_user)):
         return route(req.from_place, req.to_place, req.mode, req.departure)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class IsochroneRequest(BaseModel):
+    place: str | None = Field(
+        default=None,
+        description="Centre as a place name, resolved via the gazetteer, e.g. Essen.",
+    )
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lon: float | None = Field(default=None, ge=-180, le=180)
+    grid_n: int = Field(default=12, ge=4, le=20,
+                        description="Grid resolution (grid_n x grid_n samples).")
+
+    model_config = {
+        "json_schema_extra": {"examples": [{"place": "Essen", "grid_n": 12}]}
+    }
+
+
+@app.post("/isochrone")
+def isochrone_endpoint(req: IsochroneRequest, ident: dict = Depends(require_user)):
+    """Drive-time reachability bands from a centre point: how far you can
+    drive in 30/60/90/120 minutes, sampled over a grid via one OSRM call."""
+    from .isochrone import isochrone
+
+    _enforce_rate(ident, "route", SEARCH_RATE_PER_MIN)
+    if req.place:
+        geo = geocode(req.place)
+        if geo is None:
+            raise HTTPException(status_code=404, detail=f"Unknown place: {req.place}")
+        center = {"name": geo["name"], "lat": geo["lat"], "lon": geo["lon"]}
+    elif req.lat is not None and req.lon is not None:
+        center = {"name": f"{req.lat:.3f}, {req.lon:.3f}", "lat": req.lat, "lon": req.lon}
+    else:
+        raise HTTPException(status_code=422, detail="Provide either place or lat+lon.")
+    try:
+        return isochrone(center, grid_n=req.grid_n)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
