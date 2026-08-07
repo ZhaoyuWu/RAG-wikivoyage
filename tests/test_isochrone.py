@@ -91,3 +91,22 @@ def test_table_durations_raises_on_osrm_error(monkeypatch):
     monkeypatch.setattr(routing, "_get", lambda url, **k: _Resp())
     with pytest.raises(RuntimeError):
         iso._table_durations(center, [{"lat": 51.1, "lon": 7.0}])
+
+
+@pytest.mark.parametrize("payload", [
+    {"code": "Ok"},                       # no durations key
+    {"code": "Ok", "durations": []},      # empty matrix
+    {"code": "Ok", "durations": [None]},  # null row
+])
+def test_table_durations_malformed_matrix_is_runtime_error(monkeypatch, payload):
+    # A code:Ok response with a broken matrix must fail as RuntimeError (which
+    # the endpoint maps to 502), not a bare KeyError/IndexError/TypeError (500).
+    class _Resp:
+        def raise_for_status(self): pass
+        def json(self):
+            return payload
+
+    import src.routing as routing
+    monkeypatch.setattr(routing, "_get", lambda url, **k: _Resp())
+    with pytest.raises(RuntimeError):
+        iso._table_durations({"lat": 51.0, "lon": 7.0}, [{"lat": 51.1, "lon": 7.0}])

@@ -250,7 +250,7 @@ function paintIsochrone(data) {
     ).bindTooltip(`${p.minutes} min drive`).addTo(reachLayer);
   });
   const c = data.center;
-  L.marker([c.lat, c.lon]).bindTooltip(c.name || "centre", { permanent: false })
+  L.marker([c.lat, c.lon]).bindTooltip(esc(c.name || "centre"), { permanent: false })
     .addTo(reachLayer);
   map.setView([c.lat, c.lon], 8);
 

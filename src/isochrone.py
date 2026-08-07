@@ -58,8 +58,14 @@ def _table_durations(center: dict, grid: list[dict]) -> list[float | None]:
     if data.get("code") != "Ok":
         raise RuntimeError(f"OSRM table returned {data.get('code')}")
     # durations[0] is the row from the single source to all destinations;
-    # element 0 of that row is source->source (~0), so skip it.
-    row = data["durations"][0][1:]
+    # element 0 of that row is source->source (~0), so skip it. A code:Ok
+    # response with a missing/empty/null matrix still reaches here (seen with
+    # flaky upstreams and proxies), so validate the shape and fail as a clean
+    # RuntimeError -> 502, not a bare KeyError/IndexError -> 500.
+    durations = data.get("durations")
+    if not isinstance(durations, list) or not durations or durations[0] is None:
+        raise RuntimeError("OSRM table returned no duration matrix")
+    row = durations[0][1:]
     return [None if d is None else d / 60.0 for d in row]
 
 
