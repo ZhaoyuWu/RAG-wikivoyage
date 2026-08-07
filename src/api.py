@@ -332,6 +332,25 @@ def search(req: SearchRequest, ident: dict = Depends(require_user)):
     return [SearchHit(**vars(h)) for h in hits]
 
 
+@app.post("/trace")
+def trace(req: SearchRequest, ident: dict = Depends(require_user)):
+    """Retrieval X-ray: expose the dense leg, the sparse leg, the RRF fusion,
+    and the reranker's re-ordering for one query, so the pipeline is visible
+    instead of a black box. Costs two extra queries, hence its own endpoint."""
+    from .retrieval import hybrid_search_traced
+
+    _check_collection(req.collection)
+    deny = _authorize_collection(ident, req.collection)
+    _enforce_rate(ident, "search", SEARCH_RATE_PER_MIN)
+    return hybrid_search_traced(
+        req.query,
+        top_k=req.top_k,
+        category=req.category,
+        collection=req.collection,
+        deny_categories=deny,
+    )
+
+
 class RouteRequest(BaseModel):
     from_place: str = Field(min_length=1, description="Start, e.g. Essen")
     to_place: str = Field(min_length=1, description="Destination, e.g. Goslar")

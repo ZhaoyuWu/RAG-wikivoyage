@@ -70,6 +70,22 @@
     padding: .4rem 0; user-select: none;
   }
   .trace summary:hover { color: var(--accent); }
+  /* Retrieval X-ray */
+  .xray-cols { display: grid; grid-template-columns: 1fr 1fr 1.3fr; gap: .8rem; margin-top: .6rem; }
+  @media (max-width: 720px) { .xray-cols { grid-template-columns: 1fr; } }
+  .xray-col h4 { margin: 0 0 .5rem; font-size: .85rem; color: var(--muted); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .04em; }
+  .xray-row { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: .4rem .55rem; margin-bottom: .4rem; font-size: .82rem; display: flex;
+    align-items: baseline; gap: .5rem; }
+  .xray-rank { background: var(--border); color: var(--text); border-radius: 5px;
+    padding: .05rem .4rem; font-size: .72rem; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  .xray-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .xray-move { font-size: .72rem; color: var(--muted); flex-shrink: 0; }
+  .xray-promoted { color: #16a34a; font-weight: 600; }
+  .xray-note { color: var(--muted); font-size: .82rem; margin: .3rem 0 .8rem; }
+  .xray-badge { background: #16a34a22; color: #16a34a; border-radius: 5px;
+    padding: .05rem .4rem; font-size: .7rem; margin-left: .3rem; }
   #map {
     height: 340px; border-radius: 10px; border: 1px solid var(--border);
     margin-bottom: .8rem; display: none;
@@ -104,6 +120,7 @@
       <label><input type="radio" name="mode" value="route"><span>Route</span></label>
       <label><input type="radio" name="mode" value="plan"><span>🗺️ Plan</span></label>
       <label><input type="radio" name="mode" value="reach"><span>🎨 Reach</span></label>
+      <label><input type="radio" name="mode" value="xray"><span>🔬 X-ray</span></label>
     </span>
     <input type="text" id="category" placeholder="category (optional)" size="14">
     <button id="geobtn" title="Filter results by map location">📍 near</button>
@@ -521,6 +538,74 @@ function sourceLines(sources) {
     `<div class="src">• ${esc(s.file)} :: ${esc(s.heading)}</div>`).join("");
 }
 
+// ---- Retrieval X-ray ----
+function legRows(rows) {
+  return rows.map(r =>
+    `<div class="xray-row"><span class="xray-rank">#${r.rank + 1}</span>` +
+    `<span class="xray-file" title="${esc(r.file)}">${esc(r.file)}</span></div>`
+  ).join("") || `<div class="xray-note">(none)</div>`;
+}
+
+function fusedRows(rows) {
+  return rows.map(r => {
+    // Show where this result stood in each leg, and flag when fusion/rerank
+    // pulled it up from a weak position in both.
+    const d = r.dense_rank === null ? "–" : "#" + (r.dense_rank + 1);
+    const s = r.sparse_rank === null ? "–" : "#" + (r.sparse_rank + 1);
+    const worst = Math.max(r.dense_rank ?? 99, r.sparse_rank ?? 99);
+    const promoted = worst > r.final_rank;
+    return `<div class="xray-row" title="dense ${d}, sparse ${s}` +
+      (promoted ? " — rescued by fusion from a weak leg position" : "") + `">` +
+      `<span class="xray-rank">#${r.final_rank + 1}</span>` +
+      `<span class="xray-file">${esc(r.file)}` +
+      (promoted ? `<span class="xray-badge">↑</span>` : "") +
+      `</span>` +
+      `<span class="xray-move ${promoted ? "xray-promoted" : ""}">d${d}·s${s}</span>` +
+      `</div>`;
+  }).join("") || `<div class="xray-note">(none)</div>`;
+}
+
+function renderXray(data) {
+  const st = data.stages;
+  const exp = data.expanded_query
+    ? `Query expanded to “${esc(data.expanded_query)}” before retrieval. ` : "";
+  const note = `${exp}Dense recalled ${st.dense_candidates}, sparse recalled ${st.sparse_candidates}. `
+    + `${st.reranker_on ? "Reranker ON" : "Reranker off"} — ${esc(st.sigmoid_note)}. `
+    + (st.promotions ? `<b>${st.promotions}</b> result(s) rescued by fusion/rerank from a weak leg position.`
+                     : "");
+  $("results").innerHTML = `
+    <div class="card">
+      <div class="xray-note">${note}</div>
+      <div class="xray-cols">
+        <div class="xray-col"><h4>Dense (bge-m3)</h4>${legRows(data.dense)}</div>
+        <div class="xray-col"><h4>Sparse (BM25)</h4>${legRows(data.sparse)}</div>
+        <div class="xray-col"><h4>Fused → ${st.reranker_on ? "Reranked" : "RRF"}</h4>${fusedRows(data.fused)}</div>
+      </div>
+    </div>`;
+}
+
+async function runXray() {
+  const query = $("query").value.trim();
+  if (!query) return;
+  $("go").disabled = true;
+  status(`<span class="spin"></span>Tracing retrieval…`);
+  try {
+    const resp = await api("/trace", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, top_k: 8, collection: $("collection").value || null }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || resp.statusText);
+    renderXray(data);
+    status("Retrieval pipeline traced. Dense, sparse, and the fused/reranked result side by side.");
+  } catch (e) {
+    status("Error: " + esc(e.message), true);
+  } finally {
+    $("go").disabled = false;
+  }
+}
+
 function restoreTurn(t) {
   const turn = newTurn(t.query);
   const details = turn.querySelector("details");
@@ -771,6 +856,7 @@ async function run() {
     finally { $("go").disabled = false; }
     return;
   }
+  if (mode === "xray") { await runXray(); return; }
   const query = $("query").value.trim();
   if (!query) return;
   const body = {
@@ -831,8 +917,12 @@ document.querySelectorAll("input[name=mode]").forEach(r =>
     $("reachbar").style.display = isReach ? "flex" : "none";
     $("query").placeholder = r.value === "plan"
       ? "描述行程,如:从 Essen 出发一天,想看城堡和徒步,不要夜店"
+      : r.value === "xray"
+      ? "Type a query to see how dense, sparse, RRF and rerank pick the results"
       : "Type a question and press Enter";
     if (isRoute || isReach || r.value === "plan") ensureMap();
+    // X-ray shows a side-by-side pipeline, not the map or a conversation.
+    if (r.value === "xray") { $("map").style.display = "none"; $("results").innerHTML = ""; }
     // Leaving reach mode clears the paint so it doesn't linger over results.
     if (!isReach && reachLayer) {
       reachLayer.clearLayers();

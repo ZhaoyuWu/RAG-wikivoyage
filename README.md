@@ -146,6 +146,14 @@ With dense vectors alone, an irrelevant hiking note scores within 0.0001 of a co
 
 The flip side, first measured then fixed: cross-language retrieval weakened on transliterated proper nouns. "哈茨山区" (the Chinese transliteration of Harz) did not anchor to the region, because the BM25 leg had no German token to match. The eval quantified the damage — transliterated place names were the main drag, holding hit rate at 56%. The fix (`src/aliases.py`) appends the German spelling of any known transliteration to the query, so BM25 gets its exact token back. Golden-set hit rate went from 56% to 100%. It is a deterministic lookup table, not a model guess — proper-noun mapping is knowledge, not inference.
 
+### Retrieval X-ray
+
+The argument above is easy to make in prose and hard to see. The X-ray mode makes it visible: for one query it runs the dense leg, the sparse leg, and the fused result separately, then lines them up so you can watch each stage change the ranking.
+
+![Retrieval X-ray: dense, sparse, and fused rankings side by side](assets/retrieval-xray.png)
+
+The production path fuses dense and sparse inside a single Qdrant query, so their individual rankings aren't observable there. `hybrid_search_traced` (behind the `/trace` endpoint) runs the two legs separately at the cost of two extra queries — which is why it is its own endpoint, not part of the hot ask path. In the screenshot, "科隆大教堂" ("Cologne Cathedral") is expanded to add the German token "Köln", and a "↑" flags results that fusion rescued from a weak position in both legs: the Köln article sits at rank 18 in the dense leg and 13 in the sparse leg, yet lands in the fused top five. That rescue is the whole reason both legs exist, and here it is a thing you can point at rather than assert.
+
 ## Scaling case study: 371 to 49,460 chunks
 
 To test the stack beyond a personal vault, a second pipeline (`pipelines/wikivoyage/`) indexes the German Wikivoyage dump: 20,968 articles streamed from the official XML export, cleaned from wikitext to markdown (POI templates rendered as text, section headings preserved), filtered to the 3,873 Germany articles via the IstIn breadcrumb graph, and embedded into a separate collection of 49,460 chunks.

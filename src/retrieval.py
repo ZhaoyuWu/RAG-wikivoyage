@@ -197,6 +197,98 @@ def hybrid_search(
     return hits
 
 
+def _named_search(vec, using: str, query_filter, collection, limit=20):
+    """Single-leg search (dense or sparse) returning (file, heading, score)
+    rows, used only by the traced view to expose each leg's own ranking."""
+    result = _client().query_points(
+        collection_name=collection or COLLECTION_NAME,
+        query=vec, using=using, query_filter=query_filter,
+        limit=limit, with_payload=True,
+    )
+    return [(p.payload["file"], p.payload["heading"], p.score)
+            for p in result.points]
+
+
+def hybrid_search_traced(
+    query: str,
+    top_k: int = 5,
+    category: str | None = None,
+    collection: str | None = None,
+    deny_categories: list[str] | None = None,
+) -> dict:
+    """Like hybrid_search, but exposes the full retrieval pipeline for an
+    X-ray view: what the dense leg ranked, what the sparse leg ranked, how RRF
+    fused them, and how the reranker re-ordered the survivors.
+
+    This runs the dense and sparse legs SEPARATELY (the production path fuses
+    them inside one Qdrant query, so their individual rankings aren't
+    observable). It costs two extra queries, so it is only for the debug/trace
+    endpoint, never the hot ask path. Returns:
+      {query, expanded_query, dense[], sparse[], fused[], stages}
+    where each row is {file, heading, score, rank} and fused rows also carry
+    dense_rank / sparse_rank / final_rank so the frontend can draw movement.
+    """
+    from .aliases import expand_query
+
+    expanded = expand_query(query)
+    query_filter = _build_filter(category, None, deny_categories)
+
+    dense_vec = _dense_model().encode(expanded, normalize_embeddings=True).tolist()
+    sparse_raw = next(iter(_sparse_model().embed([expanded])))
+    sparse_vec = models.SparseVector(
+        indices=sparse_raw.indices.tolist(), values=sparse_raw.values.tolist()
+    )
+
+    dense_rows = _named_search(dense_vec, "dense", query_filter, collection)
+    sparse_rows = _named_search(sparse_vec, "sparse", query_filter, collection)
+    dense_rank = {f: i for i, (f, _, _) in enumerate(dense_rows)}
+    sparse_rank = {f: i for i, (f, _, _) in enumerate(sparse_rows)}
+
+    # The real fused ranking, straight from the production path (RRF, then the
+    # reranker if enabled). Fetch a few extra so the fused list is informative.
+    fused_hits = hybrid_search(expanded, top_k=max(top_k, 8), category=category,
+                               collection=collection,
+                               deny_categories=deny_categories)
+
+    def rows(items):
+        return [{"file": f, "heading": h, "score": round(s, 4), "rank": i}
+                for i, (f, h, s) in enumerate(items)]
+
+    fused = []
+    for i, hit in enumerate(fused_hits):
+        fused.append({
+            "file": hit.file, "heading": hit.heading,
+            "score": round(hit.score, 4), "final_rank": i,
+            "dense_rank": dense_rank.get(hit.file),
+            "sparse_rank": sparse_rank.get(hit.file),
+        })
+
+    # Did anything the reranker promoted come from a weak fused position? Flag
+    # a promotion when a fused row's dense and sparse ranks are both worse than
+    # its final rank, i.e. fusion/rerank rescued it. (Purely informational.)
+    promotions = sum(
+        1 for r in fused
+        if r["dense_rank"] is not None and r["sparse_rank"] is not None
+        and min(r["dense_rank"], r["sparse_rank"]) > r["final_rank"]
+    )
+
+    return {
+        "query": query,
+        "expanded_query": expanded if expanded != query else None,
+        "dense": rows(dense_rows)[:top_k],
+        "sparse": rows(sparse_rows)[:top_k],
+        "fused": fused[:top_k],
+        "stages": {
+            "dense_candidates": len(dense_rows),
+            "sparse_candidates": len(sparse_rows),
+            "reranker_on": bool(USE_RERANKER),
+            "promotions": promotions,
+            "sigmoid_note": "final scores are sigmoid-calibrated 0-1 when the reranker is on"
+                            if USE_RERANKER else "final scores are RRF fusion ranks",
+        },
+    }
+
+
 def _print_hits(hits: list[Hit]) -> None:
     for i, h in enumerate(hits, 1):
         preview = h.text.replace("\n", " ")[:80]
