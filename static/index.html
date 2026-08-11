@@ -26,7 +26,15 @@
   body {
     background: var(--bg); color: var(--text);
     font: 15px/1.6 system-ui, "Segoe UI", sans-serif;
-    max-width: 860px; margin: 0 auto; padding: 2rem 1.2rem 4rem;
+    max-width: 1380px; margin: 0 auto; padding: 1.6rem 1.2rem 4rem;
+  }
+  /* Chat left, map right. The map is sticky and viewport-high, so the
+     conversation scrolls beside a pinned map instead of pushing it away. */
+  #layout { display: flex; gap: 1.2rem; align-items: flex-start; }
+  #chatpane { flex: 1; min-width: 0; }
+  @media (max-width: 980px) {
+    /* Stacked: map first (it is the context), conversation below. */
+    #layout { flex-direction: column-reverse; align-items: stretch; }
   }
   header {
     display: flex; justify-content: space-between; align-items: flex-start;
@@ -114,8 +122,13 @@
   .xray-badge { background: #16a34a22; color: #16a34a; border-radius: 5px;
     padding: .05rem .4rem; font-size: .7rem; margin-left: .3rem; }
   #map {
-    height: 340px; border-radius: var(--radius); border: 1px solid var(--border);
-    margin-bottom: .8rem; display: none; box-shadow: var(--shadow);
+    flex: 0 0 clamp(320px, 44%, 600px);
+    position: sticky; top: 1rem; height: calc(100vh - 2rem);
+    border-radius: var(--radius); border: 1px solid var(--border);
+    display: none; box-shadow: var(--shadow);
+  }
+  @media (max-width: 980px) {
+    #map { position: static; height: 340px; flex: none; width: 100%; margin-bottom: .8rem; }
   }
   #filterbar { font-size: .9rem; }
   #filterbar .flabel { color: var(--muted); font-size: .82rem; }
@@ -174,6 +187,10 @@
     <select id="collection" title="Collection"></select>
   </header>
 
+  <!-- Chat pane left, map right (sticky, full height); stacked on narrow
+       screens. When the map is hidden (X-ray) the chat takes the full width. -->
+  <div id="layout">
+  <div id="chatpane">
   <!-- Auto is the conversation (it routes each query to answering, planning
        or reach search by itself); the three pills beside it are tools with
        controls of their own: timetable routing, reachability painting,
@@ -235,9 +252,11 @@
     <button id="goreach" class="ghost" title="Just paint the reachability bands">🎨 Paint</button>
   </div>
 
-  <div id="map"></div>
   <div id="status"></div>
   <div id="results"></div>
+  </div><!-- /chatpane -->
+  <div id="map"></div>
+  </div><!-- /layout -->
 
   <div id="loginwrap" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.5); z-index:2000; align-items:center; justify-content:center">
     <div class="card" style="min-width:280px; background:var(--card)">
