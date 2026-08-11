@@ -69,6 +69,73 @@ def _table_durations(center: dict, grid: list[dict]) -> list[float | None]:
     return [None if d is None else d / 60.0 for d in row]
 
 
+# OSRM /table handles a 14x14 grid (197 coords) fine; stay under that
+# known-good size when batching candidate coordinates.
+_MAX_TABLE_POINTS = 150
+
+
+def reach_filter(center: dict, budget_min: float, hits,
+                 table_fn=None) -> tuple[list[dict], int]:
+    """Filter retrieval hits by REAL driving time, not straight-line distance.
+
+    Collects each hit's article centroid plus the POIs mentioned in its text,
+    asks OSRM for the driving minutes to all of them in ONE /table call, then
+    keeps only what is reachable within `budget_min`. The isochrone grid is
+    for painting; candidates get exact per-point times because a single table
+    call prices them all anyway.
+
+    Returns (kept, dropped): `kept` are hit dicts carrying `drive_min` (the
+    centroid time) and per-POI `drive_min`, in the original relevance order;
+    `dropped` counts candidates that were retrieved inside the straight-line
+    prefilter circle but are NOT drivable within budget — the number that
+    makes the circle-vs-isochrone story concrete. Hits without coordinates
+    cannot be verified and count as dropped. `table_fn` is injectable for
+    tests; it defaults to the OSRM-backed `_table_durations`.
+    """
+    table_fn = table_fn or _table_durations
+
+    # Dedup coordinates across centroids and POIs: one table column each.
+    index_of: dict[tuple, int] = {}
+    points: list[dict] = []
+
+    def _slot(lat, lon) -> int | None:
+        key = (round(lat, 4), round(lon, 4))
+        if key in index_of:
+            return index_of[key]
+        if len(points) >= _MAX_TABLE_POINTS:
+            return None
+        index_of[key] = len(points)
+        points.append({"lat": lat, "lon": lon})
+        return index_of[key]
+
+    slots = []  # per hit: (centroid_slot, [(poi, poi_slot), ...])
+    for h in hits:
+        geo = h.geo
+        c_slot = _slot(geo["lat"], geo["lon"]) if geo else None
+        poi_slots = [(p, _slot(p["lat"], p["lon"]))
+                     for p in (h.pois or [])
+                     if "lat" in p and "lon" in p]
+        slots.append((c_slot, poi_slots))
+
+    minutes = table_fn(center, points) if points else []
+
+    kept: list[dict] = []
+    dropped = 0
+    for h, (c_slot, poi_slots) in zip(hits, slots):
+        drive = minutes[c_slot] if c_slot is not None else None
+        if drive is None or drive > budget_min:
+            dropped += 1
+            continue
+        pois = []
+        for poi, p_slot in poi_slots:
+            p_min = minutes[p_slot] if p_slot is not None else None
+            if p_min is None or p_min > budget_min:
+                continue
+            pois.append({**poi, "drive_min": round(p_min, 1)})
+        kept.append({**vars(h), "pois": pois, "drive_min": round(drive, 1)})
+    return kept, dropped
+
+
 def isochrone(center: dict, grid_n: int = 12, bands=DEFAULT_BANDS) -> dict:
     """Compute drive-time bands from `center` over a grid.
 

@@ -211,3 +211,51 @@ def test_metrics_is_prometheus_text(client, monkeypatch):
     r = client.get("/metrics")
     assert r.status_code == 200
     assert "rag_rate_limited_total" in r.text
+
+
+# --- Reach search (drive-time filtered retrieval) --------------------------
+
+def test_reach_search_prefilters_by_circle_then_prices(client, monkeypatch):
+    app.dependency_overrides[require_user] = _as("admin")
+    monkeypatch.setattr(api, "_check_collection", lambda c: None)
+    monkeypatch.setattr(api, "geocode",
+                        lambda p: {"name": "Essen", "lat": 51.45, "lon": 7.01})
+
+    captured = {}
+
+    def fake_search(q, **k):
+        captured.update(k)
+        return ["hit1", "hit2"]
+
+    monkeypatch.setattr(api, "hybrid_search", fake_search)
+    import src.isochrone as iso
+    monkeypatch.setattr(
+        iso, "reach_filter",
+        lambda center, budget, hits: ([{"file": "a.md", "drive_min": 40.0}], 1))
+
+    r = client.post("/reach/search",
+                    json={"query": "Burgen", "place": "Essen", "minutes": 60})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["center"]["name"] == "Essen"
+    # The straight-line prefilter circle scales with the budget (60 * 1.9).
+    assert body["radius_km"] == 114
+    assert captured["geo"]["radius_km"] == 114
+    assert body["considered"] == 2
+    assert body["dropped"] == 1
+    assert body["hits"][0]["drive_min"] == 40.0
+
+
+def test_reach_search_unknown_place_is_404(client, monkeypatch):
+    app.dependency_overrides[require_user] = _as("admin")
+    monkeypatch.setattr(api, "_check_collection", lambda c: None)
+    monkeypatch.setattr(api, "geocode", lambda p: None)
+    r = client.post("/reach/search", json={"query": "Burgen", "place": "Nirgendwo"})
+    assert r.status_code == 404
+
+
+def test_reach_search_requires_a_centre(client, monkeypatch):
+    app.dependency_overrides[require_user] = _as("admin")
+    monkeypatch.setattr(api, "_check_collection", lambda c: None)
+    r = client.post("/reach/search", json={"query": "Burgen"})
+    assert r.status_code == 422

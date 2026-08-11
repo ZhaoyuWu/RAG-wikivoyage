@@ -43,6 +43,10 @@ The Reach mode turns the routing backend into a picture: pick a centre (type a p
 
 ![Drive-time reachability from Essen](assets/isochrone-essen.png)
 
+Reach also searches. Type a query next to the time budget and retrieval runs inside the painted region: a generous straight-line circle prefilters candidates, then one more OSRM `/table` call prices every candidate with real driving minutes and drops the ones the road network cannot deliver in time. Each result card shows its exact drive time, and pins are coloured by time band. Asking for castles within 90 minutes of Essen, 24 candidates sat inside the 171 km circle but only 8 were truly drivable in time. Text similarity knows what a castle is, the road network decides whether you can get there.
+
+![Reach search: castles within 90 minutes of Essen](assets/reach-search-essen.png)
+
 Boundary note: the AI pipeline (embedding, retrieval, generation) stays fully local. Map tiles and routing calls go to public services and carry only place names and coordinates, never corpus content.
 
 ## Architecture

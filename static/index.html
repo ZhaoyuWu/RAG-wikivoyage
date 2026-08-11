@@ -154,8 +154,15 @@
   </div>
   <div class="bar" id="reachbar" style="display:none">
     <input type="text" id="reachfrom" placeholder="Centre (e.g. Essen) — or click the map" size="20">
-    <span style="color:var(--muted); font-size:.85rem">drive-time reachability, 30 / 60 / 90 / 120 min</span>
-    <button id="goreach">Paint</button>
+    <select id="reachmin" title="Drive-time budget">
+      <option value="30">≤30 min</option>
+      <option value="60">≤60 min</option>
+      <option value="90" selected>≤90 min</option>
+      <option value="120">≤120 min</option>
+    </select>
+    <input type="text" id="reachq" placeholder="What to find, e.g. Burgen / 徒步" size="22">
+    <button id="goreachq">Search</button>
+    <button id="goreach" title="Just paint the reachability bands">🎨 Paint</button>
   </div>
 
   <div id="map"></div>
@@ -252,14 +259,17 @@ function drawGeoFilter() {
 // ---- Reachability isochrone ----
 let reachLegend = null;
 
-function paintIsochrone(data) {
+function paintIsochrone(data, maxMinutes) {
   reachLayer.clearLayers();
   // Each grid sample becomes a square sized to exactly meet its neighbours
   // (half the grid spacing, from the backend), so the cells tile into
-  // continuous reachability bands instead of separate dots.
+  // continuous reachability bands instead of separate dots. When a search
+  // budget is given, only paint up to it: the paint IS the constraint.
   const dLat = (data.cell && data.cell.lat) || 0.17;
   const dLon = (data.cell && data.cell.lon) || 0.25;
-  data.points.forEach(p => {
+  const points = maxMinutes ? data.points.filter(p => p.minutes <= maxMinutes)
+                            : data.points;
+  points.forEach(p => {
     L.rectangle(
       [[p.lat - dLat, p.lon - dLon], [p.lat + dLat, p.lon + dLon]],
       { color: REACH_COLORS[p.band], weight: 0, fillColor: REACH_COLORS[p.band],
@@ -278,7 +288,10 @@ function paintIsochrone(data) {
     const div = L.DomUtil.create("div");
     div.style.cssText = "background:var(--card); padding:.5rem .7rem; border-radius:8px;"
       + "box-shadow:0 1px 6px rgba(0,0,0,.2); font-size:.8rem; line-height:1.6";
-    div.innerHTML = "<b>Drive time</b><br>" + REACH_LABELS.map((lab, i) =>
+    const nBands = maxMinutes
+      ? Math.max(1, data.bands.filter(b => b <= maxMinutes).length)
+      : REACH_LABELS.length;
+    div.innerHTML = "<b>Drive time</b><br>" + REACH_LABELS.slice(0, nBands).map((lab, i) =>
       `<span style="display:inline-block;width:12px;height:12px;background:${REACH_COLORS[i]};`
       + `border-radius:2px;margin-right:6px;vertical-align:middle"></span>${lab}`
     ).join("<br>");
@@ -311,6 +324,7 @@ async function runIsochrone(center) {
       return;
     }
     paintIsochrone(data);
+    lastReachCenter = data.center;
     $("reachfrom").value = data.center.name || $("reachfrom").value;
     status(`Painted ${data.points.length} reachable cells from ${esc(data.center.name || "centre")}.`);
   } catch (e) {
@@ -318,6 +332,91 @@ async function runIsochrone(center) {
   } finally {
     $("goreach").disabled = false;
   }
+}
+
+// ---- Reach search: retrieval filtered by real driving time ----
+let lastReachCenter = null;
+
+const bandForMin = m => {
+  const edges = [30, 60, 90, 120];
+  for (let i = 0; i < edges.length; i++) if (m <= edges[i]) return i;
+  return edges.length - 1;
+};
+
+async function runReachSearch() {
+  const query = $("reachq").value.trim();
+  if (!query) { status("Enter what to look for, e.g. Burgen.", true); return; }
+  const minutes = parseInt($("reachmin").value, 10);
+  const place = $("reachfrom").value.trim();
+  const centre = place ? { place } :
+    lastReachCenter ? { lat: lastReachCenter.lat, lon: lastReachCenter.lon } : null;
+  if (!centre) { status("Set a centre first: type a place or click the map.", true); return; }
+
+  ensureMap();
+  $("goreachq").disabled = true;
+  status(`<span class="spin"></span>Searching within ${minutes} min drive…`);
+  try {
+    // Paint and search in parallel; each costs one OSRM call.
+    const post = (url, body) => api(url, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const [isoResp, resp] = await Promise.all([
+      post("/isochrone", { ...centre, grid_n: 14 }),
+      post("/reach/search", { query, minutes, top_k: 8, ...centre,
+                              collection: $("collection").value }),
+    ]);
+    const d = await resp.json();
+    if (!resp.ok) throw new Error(d.detail || resp.statusText);
+    const isoData = await isoResp.json().catch(() => null);
+    if (isoResp.ok && isoData && isoData.points.length) paintIsochrone(isoData, minutes);
+    lastReachCenter = d.center;
+    $("reachfrom").value = d.center.name || $("reachfrom").value;
+    renderReachHits(d);
+    status(`${d.hits.length} of ${d.considered} candidates truly within ${minutes} min of `
+      + `${esc(d.center.name)} — ${d.dropped} sat inside the ${d.radius_km} km circle `
+      + `but are not reachable by road in time.`);
+  } catch (e) {
+    status("Error: " + esc(e.message), true);
+  } finally {
+    $("goreachq").disabled = false;
+  }
+}
+
+function renderReachHits(d) {
+  $("results").innerHTML = d.hits.length ? d.hits.map(h => `
+    <div class="card">
+      <div class="meta">
+        <span class="dur">🚗 ${h.drive_min} min</span>
+        <span class="score">${h.score.toFixed(3)}</span>
+        <span class="src">${esc(h.file)} :: ${esc(h.heading)}</span>
+      </div>
+      <p>${esc(h.text)}</p>
+    </div>`).join("")
+    : `<div class="card"><p>Nothing reachable within ${d.minutes} min — try a bigger budget.</p></div>`;
+
+  // Pins coloured by each point's own time band; the dashed circle shows what
+  // a naive straight-line filter would have claimed as "within reach".
+  poiLayer.clearLayers();
+  L.circle([d.center.lat, d.center.lon], { radius: d.radius_km * 1000,
+    color: "#64748b", weight: 1.5, dashArray: "6 6", fillOpacity: 0 })
+    .bindTooltip(`straight-line ${d.radius_km} km — what a naive radius filter claims`)
+    .addTo(poiLayer);
+  const seen = new Set();
+  d.hits.forEach(h => {
+    const pts = (h.pois && h.pois.length) ? h.pois
+      : (h.geo ? [{ name: h.file, lat: h.geo.lat, lon: h.geo.lon,
+                    drive_min: h.drive_min }] : []);
+    pts.forEach(p => {
+      if (seen.has(p.name)) return;
+      seen.add(p.name);
+      L.circleMarker([p.lat, p.lon], {
+        radius: 7, color: "#ffffff", weight: 1.5,
+        fillColor: REACH_COLORS[bandForMin(p.drive_min)], fillOpacity: .95,
+      }).bindPopup(`<b>${esc(p.name)}</b><br>🚗 ${p.drive_min} min<br>`
+                   + `<small>${esc(h.file)}</small>`).addTo(poiLayer);
+    });
+  });
 }
 
 function plotHits(hits) {
@@ -936,6 +1035,8 @@ document.querySelectorAll("input[name=mode]").forEach(r =>
 
 $("goreach").onclick = () => runIsochrone();
 $("reachfrom").addEventListener("keydown", e => { if (e.key === "Enter") runIsochrone(); });
+$("goreachq").onclick = () => runReachSearch();
+$("reachq").addEventListener("keydown", e => { if (e.key === "Enter") runReachSearch(); });
 
 $("geobtn").onclick = () => {
   if (geoFilter || picking) {           // clear

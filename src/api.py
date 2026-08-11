@@ -417,6 +417,78 @@ def isochrone_endpoint(req: IsochroneRequest, ident: dict = Depends(require_user
         raise HTTPException(status_code=502, detail=str(e))
 
 
+class ReachSearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    minutes: int = Field(default=90, ge=15, le=120,
+                         description="Drive-time budget from the centre.")
+    place: str | None = Field(
+        default=None,
+        description="Centre as a place name, resolved via the gazetteer.",
+    )
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lon: float | None = Field(default=None, ge=-180, le=180)
+    top_k: int = Field(default=8, ge=1, le=20)
+    collection: str | None = None
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{"query": "Burgen und Schlösser", "place": "Essen",
+                          "minutes": 90}]
+        }
+    }
+
+
+# Generous straight-line prefilter: autobahn covers just under 2 km per
+# minute, so this circle contains everything drivable in the budget. The
+# reach filter then prices each candidate with real driving time.
+_REACH_KM_PER_MIN = 1.9
+
+
+@app.post("/reach/search")
+def reach_search(req: ReachSearchRequest, ident: dict = Depends(require_user)):
+    """Retrieval filtered by real driving time: 'castles within 90 minutes'
+    where 90 minutes means OSRM says so, not a straight-line circle. Hybrid
+    search inside a generous radius first, then one OSRM /table call prices
+    every candidate and drops the ones the road network cannot deliver."""
+    from .isochrone import reach_filter
+
+    _check_collection(req.collection)
+    deny = _authorize_collection(ident, req.collection)
+    _enforce_rate(ident, "route", SEARCH_RATE_PER_MIN)
+
+    if req.place:
+        geo = geocode(req.place)
+        if geo is None:
+            raise HTTPException(status_code=404, detail=f"Unknown place: {req.place}")
+        center = {"name": geo["name"], "lat": geo["lat"], "lon": geo["lon"]}
+    elif req.lat is not None and req.lon is not None:
+        center = {"name": f"{req.lat:.3f}, {req.lon:.3f}", "lat": req.lat, "lon": req.lon}
+    else:
+        raise HTTPException(status_code=422, detail="Provide either place or lat+lon.")
+
+    radius_km = round(req.minutes * _REACH_KM_PER_MIN)
+    fetch_k = min(max(req.top_k * 3, 12), 30)
+    hits = hybrid_search(
+        req.query,
+        top_k=fetch_k,
+        collection=req.collection,
+        geo={"lat": center["lat"], "lon": center["lon"], "radius_km": radius_km},
+        deny_categories=deny,
+    )
+    try:
+        kept, dropped = reach_filter(center, req.minutes, hits)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {
+        "center": center,
+        "minutes": req.minutes,
+        "radius_km": radius_km,
+        "considered": len(hits),
+        "dropped": dropped,
+        "hits": kept[:req.top_k],
+    }
+
+
 class PlanRequest(BaseModel):
     query: str = Field(min_length=1)
     collection: str | None = Field(
