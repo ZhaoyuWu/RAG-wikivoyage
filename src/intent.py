@@ -9,6 +9,7 @@ Detectors:
 - detect_route_intent: "A到B怎么去" -> the routing backend (used inside ask).
 - detect_plan_intent:  "essen周边1日游" -> the trip planner.
 - detect_reach_intent: "Essen出发90分钟车程内..." -> reach search.
+- detect_along_intent: "从A到B沿途有什么景点" -> corridor search along the drive.
 """
 
 import re
@@ -45,6 +46,47 @@ def detect_plan_intent(question: str) -> bool:
     if _STRONG_PLAN.search(question):
         return True
     return bool(_DAY_COUNT.search(question) and _TRIP_FLAVOUR.search(question))
+
+
+# Along-route: an A-to-B pair plus corridor language ("沿途", "on the way").
+_ALONG_MARKERS = ("沿途", "路上", "途中", "顺路", "一路",
+                  "along the way", "on the way", "unterwegs", "entlang")
+_ALONG_PAIRS = [
+    re.compile(r"从\s*(?P<a>[\w()\- ]{2,30}?)\s*(?:到|去|至)\s*"
+               r"(?P<b>[\w()\- ]{2,30}?)(?:的|,|，|。|\s|沿途|路上|途中|顺路|一路|有|$)"),
+    re.compile(r"(?P<a>[\w()\- ]{2,30}?)\s*到\s*"
+               r"(?P<b>[\w()\- ]{2,30}?)(?:的|,|，|。|\s|沿途|路上|途中|顺路|一路|有|$)"),
+    re.compile(r"\bfrom\s+(?P<a>[\w()\- ]{2,30}?)\s+to\s+(?P<b>[\w()\- ]{2,30}?)(?:\s|,|$)",
+               re.IGNORECASE),
+    re.compile(r"\bvon\s+(?P<a>[\w()\- ]{2,30}?)\s+nach\s+(?P<b>[\w()\- ]{2,30}?)(?:\s|,|$)",
+               re.IGNORECASE),
+]
+
+
+def detect_along_intent(question: str) -> dict | None:
+    """Return {from_place, to_place, interests} when the question asks what
+    lies ALONG a drivable A-to-B corridor and both places resolve in the
+    gazetteer; else None. Interests are literal keywords from the planner's
+    vocabulary, defaulting to sights."""
+    lowered = question.lower()
+    if not any(m in question or m in lowered for m in _ALONG_MARKERS):
+        return None
+    for pattern in _ALONG_PAIRS:
+        m = pattern.search(question)
+        if not m:
+            continue
+        a, b = m.group("a").strip(), m.group("b").strip()
+        try:
+            if geocode(a) and geocode(b):
+                from .planner import INTEREST_TO_HEADING
+
+                interests = [kw for kw in INTEREST_TO_HEADING
+                             if kw in question or kw in lowered][:3]
+                return {"from_place": a, "to_place": b,
+                        "interests": interests or ["景点"]}
+        except Exception:
+            return None  # gazetteer unavailable: stay on the RAG path
+    return None
 
 
 # Reach: a drive-time budget plus a resolvable centre.

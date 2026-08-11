@@ -128,3 +128,32 @@ def test_reach_geocode_failure_is_swallowed(monkeypatch):
 
     monkeypatch.setattr(intent, "geocode", boom)
     assert intent.detect_reach_intent("Essen出发90分钟车程内") is None
+
+
+# --- Along-route intent ------------------------------------------------------
+
+def test_along_extracts_pair_and_interests(monkeypatch):
+    monkeypatch.setattr(intent, "geocode", _fake_geocode)
+    r = intent.detect_along_intent("从Essen到Goslar沿途有什么城堡")
+    assert r == {"from_place": "Essen", "to_place": "Goslar",
+                 "interests": ["城堡"]}
+
+
+def test_along_defaults_to_sights(monkeypatch):
+    monkeypatch.setattr(intent, "geocode", _fake_geocode)
+    r = intent.detect_along_intent("Essen到Berlin路上有什么值得停的")
+    assert r["interests"] == ["景点"]
+
+
+def test_along_needs_marker_and_known_places(monkeypatch):
+    monkeypatch.setattr(intent, "geocode", _fake_geocode)
+    # A-to-B without corridor language is routing/ask territory, not along.
+    assert intent.detect_along_intent("从Essen到Berlin怎么去") is None
+    # Corridor language but an unresolvable place -> RAG path.
+    assert intent.detect_along_intent("从Essen到Atlantis沿途有什么") is None
+
+
+def test_along_english_on_the_way(monkeypatch):
+    monkeypatch.setattr(intent, "geocode", _fake_geocode)
+    r = intent.detect_along_intent("driving from Essen to Berlin, what is on the way?")
+    assert r["from_place"] == "Essen" and r["to_place"] == "Berlin"

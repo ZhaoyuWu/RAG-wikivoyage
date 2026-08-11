@@ -320,3 +320,13 @@ def test_ask_stream_forwards_geo_filter(client, monkeypatch):
     })
     assert r.status_code == 200
     assert seen["geo"] == {"lat": 51.75, "lon": 10.63, "radius_km": 40.0}
+
+
+def test_intent_endpoint_classifies_along(client, monkeypatch):
+    app.dependency_overrides[require_user] = _as("admin")
+    import src.intent as intent
+    monkeypatch.setattr(intent, "geocode", lambda p: {"name": p})
+    r = client.post("/intent", json={"query": "从Essen到Goslar沿途有什么城堡"})
+    body = r.json()
+    assert body["kind"] == "along"
+    assert body["from_place"] == "Essen" and body["to_place"] == "Goslar"

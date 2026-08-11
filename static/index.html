@@ -379,6 +379,10 @@ async function wikiThumb(title, geo) {
   return promise;
 }
 
+// Hovering a pin opens its popup (and thereby lazy-loads its photo); click
+// still works. Leaflet closes the previous popup when the next one opens.
+const hoverPopup = m => m.on("mouseover", () => m.openPopup());
+
 const gmapsLink = (lat, lon) =>
   `<a class="gmap" target="_blank" rel="noopener" `
   + `href="https://www.google.com/maps?q=${lat},${lon}">Maps ↗</a>`;
@@ -617,13 +621,13 @@ function renderReachHits(d) {
     pts.forEach(p => {
       if (seen.has(p.name)) return;
       seen.add(p.name);
-      L.circleMarker([p.lat, p.lon], {
+      hoverPopup(L.circleMarker([p.lat, p.lon], {
         radius: 7, color: "#ffffff", weight: 1.5,
         fillColor: REACH_COLORS[bandForMin(p.drive_min)], fillOpacity: .95,
       }).bindPopup(`<b>${esc(p.name)}</b><br>🚗 ${p.drive_min} min · ${gmapsLink(p.lat, p.lon)}<br>`
                    + `<small>${esc(h.file)}</small>`
                    + `<div class="popimg" data-title="${esc(p.name)}" data-lat="${p.lat}" data-lon="${p.lon}"></div>`)
-        .addTo(poiLayer);
+        .addTo(poiLayer));
     });
   });
 }
@@ -703,10 +707,12 @@ function renderAlongResult(d, container) {
   }
   // Detour stops as distinct pins off the main line.
   d.stops.forEach((s, i) => {
-    if (s.geo) L.marker([s.geo.lat, s.geo.lon])
+    if (!s.geo) return;
+    const pin = L.marker([s.geo.lat, s.geo.lon])
       .bindPopup(`${i + 1}. ${esc(s.file)} (+${s.detour_km} km) · ${gmapsLink(s.geo.lat, s.geo.lon)}`
                  + `<div class="popimg" data-title="${esc(s.file)}" data-lat="${s.geo.lat}" data-lon="${s.geo.lon}"></div>`)
       .addTo(poiLayer);
+    hoverPopup(pin);
   });
   const group = L.featureGroup([a, b,
     ...d.stops.filter(s => s.geo).map(s => L.marker([s.geo.lat, s.geo.lon]))]);
@@ -1044,10 +1050,10 @@ function renderPlanRoute(origin, stops) {
     const color = DAY_COLORS[(day - 1) % DAY_COLORS.length];
     const pts = origin ? [[origin.lat, origin.lon]] : [];
     byDay[day].forEach((s, i) => {
-      L.marker([s.geo.lat, s.geo.lon])
+      hoverPopup(L.marker([s.geo.lat, s.geo.lon])
         .bindPopup(`Day ${day} · ${i + 1}. ${esc(s.file)} · ${gmapsLink(s.geo.lat, s.geo.lon)}`
                    + `<div class="popimg" data-title="${esc(s.file)}" data-lat="${s.geo.lat}" data-lon="${s.geo.lon}"></div>`)
-        .addTo(routeLayer);
+        .addTo(routeLayer));
       pts.push([s.geo.lat, s.geo.lon]);
       all.push([s.geo.lat, s.geo.lon]);
     });
@@ -1201,7 +1207,25 @@ async function run() {
       });
       if (r.ok) intent = await r.json();
     } catch {}
-    if (intent.kind === "plan") {
+    if (intent.kind === "along") {
+      // "From A to B, what's on the way" — corridor search as a chat turn:
+      // route drawn, detour-worthy stops pinned, photos on hover.
+      status(`<span class="spin"></span>🚗 ${esc(intent.from_place)} → ${esc(intent.to_place)}, scanning the corridor…`);
+      const turn = el("div");
+      turn.innerHTML = `<div class="card bubble-user"><p>${esc(query)}</p></div><div class="t-along"></div>`;
+      $("results").prepend(turn);
+      const resp = await api("/plan/along", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from_place: intent.from_place,
+                               to_place: intent.to_place,
+                               interests: intent.interests }),
+      });
+      const d = await resp.json();
+      if (!resp.ok) throw new Error(d.detail || resp.statusText);
+      renderAlongResult(d, turn.querySelector(".t-along"));
+      status(`${esc(d.from.name)} → ${esc(d.to.name)}: ${d.stops.length} stop(s) within ${d.corridor_km} km of the route.`);
+      $("query").value = "";
+    } else if (intent.kind === "plan") {
       await runPlanStream(body, t0);
     } else if (intent.kind === "reach") {
       status(`→ 🎨 Reach: ${intent.minutes} min around ${esc(intent.place)}`);
