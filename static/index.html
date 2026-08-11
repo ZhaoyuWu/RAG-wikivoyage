@@ -42,9 +42,13 @@
     #layout { flex-direction: column-reverse; align-items: stretch; }
     #layout.with-map #chatpane { flex: none; }
   }
-  header {
-    display: flex; justify-content: space-between; align-items: flex-start;
-    gap: 1rem; margin-bottom: 1.1rem; flex-wrap: wrap;
+  header { margin-bottom: 1.1rem; }
+  /* The collection select sits with the mode pills: both scope the query.
+     Styled like the segmented control so the row reads as one instrument. */
+  #collection {
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: .55rem .8rem; font-weight: 600; color: var(--muted);
+    max-width: 15rem;
   }
   h1 {
     font-size: 1.5rem; letter-spacing: -.01em;
@@ -208,7 +212,6 @@
       <h1>Vault RAG</h1>
       <div class="sub">Hybrid retrieval over local collections. Ask in any language.</div>
     </div>
-    <select id="collection" title="Collection"></select>
   </header>
 
   <!-- Chat pane left, map right (sticky, full height); stacked on narrow
@@ -220,6 +223,7 @@
        controls of their own: timetable routing, reachability painting,
        retrieval X-ray. -->
   <div class="bar">
+    <select id="collection" title="Collection to query"></select>
     <span class="modes">
       <label><input type="radio" name="mode" value="auto" checked><span>✨ Auto</span></label>
       <label><input type="radio" name="mode" value="route"><span>🚆 Route</span></label>
