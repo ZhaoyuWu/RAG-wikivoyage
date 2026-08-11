@@ -93,6 +93,38 @@ def test_traced_reports_expanded_query(stub_pipeline, monkeypatch):
     assert out2["expanded_query"] is None  # no expansion -> None
 
 
+def test_promotion_requires_both_legs_and_min_worse_than_final(stub_pipeline, monkeypatch):
+    # Pin the exact promotion semantics the frontend badge must mirror:
+    # a result is "rescued" ONLY when it is present in BOTH legs and its
+    # BETTER (min) leg rank is still worse than its final rank.
+    # Files: P is weak in both (d3,s4) -> final 0 => promoted.
+    #        Q is strong in dense (d0) -> not promoted even if sparse weak.
+    #        R appears only in dense -> not promoted (missing sparse).
+    def fake_named(vec, using, qf, coll, limit=20):
+        if using == "dense":
+            return [("Q.md", "H", .9), ("a.md", "H", .8), ("b.md", "H", .7),
+                    ("P.md", "H", .6), ("R.md", "H", .5)]
+        # sparse: P at rank 4, Q at rank 3; R absent
+        return [("c.md", "H", .9), ("d.md", "H", .8), ("e.md", "H", .7),
+                ("Q.md", "H", .6), ("P.md", "H", .5)]
+
+    monkeypatch.setattr(R, "_named_search", fake_named)
+    # fused order: P(0), Q(1), R(2)
+    monkeypatch.setattr(R, "hybrid_search",
+                        lambda *a, **k: [_hit("P.md"), _hit("Q.md"), _hit("R.md")])
+
+    out = R.hybrid_search_traced("q", top_k=5)
+    fused = {r["file"]: r for r in out["fused"]}
+    # P: dense 3, sparse 4, final 0 -> min(3,4)=3 > 0 -> promoted
+    assert min(fused["P.md"]["dense_rank"], fused["P.md"]["sparse_rank"]) > fused["P.md"]["final_rank"]
+    # Q: dense 0, sparse 3, final 1 -> min=0, not > 1 -> not promoted
+    assert not (min(fused["Q.md"]["dense_rank"], fused["Q.md"]["sparse_rank"]) > fused["Q.md"]["final_rank"])
+    # R: sparse None -> disqualified
+    assert fused["R.md"]["sparse_rank"] is None
+    # Only P counts.
+    assert out["stages"]["promotions"] == 1
+
+
 def test_traced_handles_no_overlap(stub_pipeline, monkeypatch):
     # A fused file absent from both legs (shouldn't happen, but be robust):
     # its dense_rank/sparse_rank are None and it isn't counted as a promotion.

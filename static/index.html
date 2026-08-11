@@ -548,12 +548,16 @@ function legRows(rows) {
 
 function fusedRows(rows) {
   return rows.map(r => {
-    // Show where this result stood in each leg, and flag when fusion/rerank
-    // pulled it up from a weak position in both.
+    // Show where this result stood in each leg, and flag when fusion pulled it
+    // up from a weak position in BOTH legs. This must match the backend's
+    // `promotions` definition exactly (retrieval.py): a result counts as
+    // rescued only when it appears in both legs and its BETTER leg rank is
+    // still worse than its final rank. A null rank means "not in that leg's
+    // top-k" — that is not a rescue, so a missing leg disqualifies the badge.
     const d = r.dense_rank === null ? "–" : "#" + (r.dense_rank + 1);
     const s = r.sparse_rank === null ? "–" : "#" + (r.sparse_rank + 1);
-    const worst = Math.max(r.dense_rank ?? 99, r.sparse_rank ?? 99);
-    const promoted = worst > r.final_rank;
+    const promoted = r.dense_rank !== null && r.sparse_rank !== null &&
+      Math.min(r.dense_rank, r.sparse_rank) > r.final_rank;
     return `<div class="xray-row" title="dense ${d}, sparse ${s}` +
       (promoted ? " — rescued by fusion from a weak leg position" : "") + `">` +
       `<span class="xray-rank">#${r.final_rank + 1}</span>` +
