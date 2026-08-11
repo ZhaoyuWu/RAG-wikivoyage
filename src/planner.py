@@ -43,8 +43,12 @@ def _pick_provider(collection):
 # Chinese/English interest words -> the Wikivoyage section headings that hold
 # them, so a "美食" request can be narrowed to the Küche sections.
 INTEREST_TO_HEADING = {
+    # NOTE: no "essen" key. The German word for eating is also the city the
+    # user starts every trip from, and the literal-text interest extractor
+    # matches substrings — "essen周边1日游" would inject a food interest into
+    # every plan. 美食/food/cuisine cover the intent unambiguously.
     "美食": "Küche", "吃": "Küche", "餐厅": "Küche", "food": "Küche",
-    "cuisine": "Küche", "essen": "Küche",
+    "cuisine": "Küche",
     "景点": "Sehenswürdigkeiten", "城堡": "Sehenswürdigkeiten",
     "古城": "Sehenswürdigkeiten", "教堂": "Sehenswürdigkeiten",
     "博物馆": "Sehenswürdigkeiten", "sights": "Sehenswürdigkeiten",

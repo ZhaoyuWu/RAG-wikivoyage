@@ -115,7 +115,11 @@
   <div class="bar">
     <select id="collection" title="Collection"></select>
     <span class="modes">
-      <label><input type="radio" name="mode" value="search" checked><span>Search</span></label>
+      <label><input type="radio" name="mode" value="auto" checked><span>✨ Auto</span></label>
+    </span>
+    <button id="modemore" title="Pick a pipeline manually">⚙️</button>
+    <span class="modes" id="modeadv" style="display:none">
+      <label><input type="radio" name="mode" value="search"><span>Search</span></label>
       <label><input type="radio" name="mode" value="ask"><span>Ask</span></label>
       <label><input type="radio" name="mode" value="route"><span>Route</span></label>
       <label><input type="radio" name="mode" value="plan"><span>🗺️ Plan</span></label>
@@ -343,11 +347,13 @@ const bandForMin = m => {
   return edges.length - 1;
 };
 
-async function runReachSearch() {
-  const query = $("reachq").value.trim();
+async function runReachSearch(opts = {}) {
+  // opts {query, minutes, place} override the Reach bar widgets, so the
+  // Auto mode can dispatch here with parameters extracted from the text.
+  const query = (opts.query !== undefined ? opts.query : $("reachq").value).trim();
   if (!query) { status("Enter what to look for, e.g. Burgen.", true); return; }
-  const minutes = parseInt($("reachmin").value, 10);
-  const place = $("reachfrom").value.trim();
+  const minutes = opts.minutes || parseInt($("reachmin").value, 10);
+  const place = (opts.place !== undefined ? opts.place : $("reachfrom").value).trim();
   const centre = place ? { place } :
     lastReachCenter ? { lat: lastReachCenter.lat, lon: lastReachCenter.lon } : null;
   if (!centre) { status("Set a centre first: type a place or click the map.", true); return; }
@@ -976,11 +982,33 @@ async function run() {
     geo: geoFilter,
   };
   $("go").disabled = true;
-  // ask and plan accumulate a conversation; other modes replace the view
-  if (mode !== "ask" && mode !== "plan") $("results").innerHTML = "";
+  // ask, plan and auto accumulate a conversation; other modes replace the view
+  if (!["ask", "plan", "auto"].includes(mode)) $("results").innerHTML = "";
   const t0 = Date.now();
   try {
-    if (mode === "ask") {
+    if (mode === "auto") {
+      // One box, three pipelines: a cheap deterministic classifier picks
+      // plan / reach / ask (ask detects plain A-to-B routing itself).
+      // Classification is best-effort; any failure just means ask.
+      status(`<span class="spin"></span>Detecting intent…`);
+      let intent = { kind: "ask" };
+      try {
+        const r = await api("/intent", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+        });
+        if (r.ok) intent = await r.json();
+      } catch {}
+      if (intent.kind === "plan") {
+        await runPlanStream(body, t0);
+      } else if (intent.kind === "reach") {
+        status(`→ 🎨 Reach: ${intent.minutes} min around ${esc(intent.place)}`);
+        await runReachSearch({ query, minutes: intent.minutes, place: intent.place });
+        $("query").value = "";
+      } else {
+        await runAskStream(body, t0);
+      }
+    } else if (mode === "ask") {
       await runAskStream(body, t0);
     } else if (mode === "plan") {
       await runPlanStream(body, t0);
@@ -1029,6 +1057,8 @@ document.querySelectorAll("input[name=mode]").forEach(r =>
       ? "描述行程,如:从 Essen 出发一天,想看城堡和徒步,不要夜店"
       : r.value === "xray"
       ? "Type a query to see how dense, sparse, RRF and rerank pick the results"
+      : r.value === "auto"
+      ? "问答 / 行程 / 车程范围,一句话自动识别 — 如:essen周边1日游"
       : "Type a question and press Enter";
     if (isRoute || isReach || r.value === "plan") ensureMap();
     // X-ray shows a side-by-side pipeline, not the map or a conversation.
@@ -1039,6 +1069,12 @@ document.querySelectorAll("input[name=mode]").forEach(r =>
       if (reachLegend) { map.removeControl(reachLegend); reachLegend = null; }
     }
   }));
+
+// The six manual pipelines live behind the gear; Auto is the front door.
+$("modemore").onclick = () => {
+  const adv = $("modeadv");
+  adv.style.display = adv.style.display === "none" ? "inline-flex" : "none";
+};
 
 $("goreach").onclick = () => runIsochrone();
 $("reachfrom").addEventListener("keydown", e => { if (e.key === "Enter") runIsochrone(); });
@@ -1154,7 +1190,11 @@ async function init() {
   const prefs = loadJSON(PREF_KEY);
   if (prefs.mode) {
     const radio = document.querySelector(`input[name=mode][value="${prefs.mode}"]`);
-    if (radio && !radio.checked) radio.click();
+    if (radio && !radio.checked) {
+      // A restored manual pipeline must be visible, not checked in secret.
+      if (prefs.mode !== "auto") $("modeadv").style.display = "inline-flex";
+      radio.click();
+    }
   }
   await loadCollections();
   // Setting the value directly avoids the change handler, which resets the chat.

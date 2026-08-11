@@ -213,3 +213,10 @@ def test_parse_constraints_empty_history_is_none():
     finally:
         planner.geocode = orig_geocode
     assert seen["history"] is None
+
+
+def test_city_essen_is_not_a_food_interest():
+    # "essen" (German: eating) collides with the city Essen; the literal-text
+    # extractor matches substrings, so the key must not exist at all.
+    assert "essen" not in planner.INTEREST_TO_HEADING
+    assert planner._interests_from_text("essen周边1日游") == []
