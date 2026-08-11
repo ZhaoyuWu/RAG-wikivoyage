@@ -417,6 +417,28 @@ def isochrone_endpoint(req: IsochroneRequest, ident: dict = Depends(require_user
         raise HTTPException(status_code=502, detail=str(e))
 
 
+class IntentRequest(BaseModel):
+    query: str = Field(min_length=1)
+
+
+@app.post("/intent")
+def intent_endpoint(req: IntentRequest, ident: dict = Depends(require_user)):
+    """Classify a free-text query into the pipeline that should handle it:
+    'plan' (itinerary request), 'reach' (drive-time budget around a centre,
+    with the extracted parameters), or 'ask' (everything else — the ask
+    pipeline detects plain A-to-B routing itself). Deterministic rules with
+    gazetteer validation; ambiguity falls back to 'ask'."""
+    from .intent import detect_plan_intent, detect_reach_intent
+
+    _enforce_rate(ident, "search", SEARCH_RATE_PER_MIN)
+    if detect_plan_intent(req.query):
+        return {"kind": "plan"}
+    reach = detect_reach_intent(req.query)
+    if reach:
+        return {"kind": "reach", **reach}
+    return {"kind": "ask"}
+
+
 class ReachSearchRequest(BaseModel):
     query: str = Field(min_length=1)
     minutes: int = Field(default=90, ge=15, le=120,

@@ -77,3 +77,54 @@ def test_geocode_failure_is_swallowed(monkeypatch):
 
     monkeypatch.setattr(intent, "geocode", boom)
     assert intent.detect_route_intent("从Essen到Berlin怎么去") is None
+
+
+# --- Plan intent -----------------------------------------------------------
+
+def test_plan_strong_tokens_fire_alone():
+    assert intent.detect_plan_intent("essen周边1日游")
+    assert intent.detect_plan_intent("帮我安排一个行程")
+    assert intent.detect_plan_intent("weekend day trip ideas")
+
+
+def test_plan_day_count_needs_trip_flavour():
+    assert intent.detect_plan_intent("从Essen出发三天,想看城堡")
+    # A bare day count without trip language stays on the RAG path.
+    assert not intent.detect_plan_intent("三天前我问过社保的事")
+
+
+def test_plain_question_is_not_plan():
+    assert not intent.detect_plan_intent("Essen有什么好吃的")
+
+
+# --- Reach intent ----------------------------------------------------------
+
+def test_reach_extracts_place_and_minutes(monkeypatch):
+    monkeypatch.setattr(intent, "geocode", _fake_geocode)
+    r = intent.detect_reach_intent("Essen出发90分钟车程内有什么城堡")
+    assert r == {"place": "Essen", "minutes": 90}
+
+
+def test_reach_hours_convert_and_clamp(monkeypatch):
+    monkeypatch.setattr(intent, "geocode", _fake_geocode)
+    r = intent.detect_reach_intent("从Essen出发,1小时以内能到的徒步")
+    assert r["minutes"] == 60
+    # 3 hours clamps to the API's 120-minute ceiling.
+    r = intent.detect_reach_intent("从Essen出发三小时车程内")
+    assert r["minutes"] == 120
+
+
+def test_reach_needs_marker_and_known_place(monkeypatch):
+    monkeypatch.setattr(intent, "geocode", _fake_geocode)
+    # A duration without reach language ("多久") is not a reach query.
+    assert intent.detect_reach_intent("开车去柏林要几小时") is None
+    # Unknown centre -> RAG path.
+    assert intent.detect_reach_intent("Atlantis出发60分钟车程内") is None
+
+
+def test_reach_geocode_failure_is_swallowed(monkeypatch):
+    def boom(_place):
+        raise RuntimeError("gazetteer offline")
+
+    monkeypatch.setattr(intent, "geocode", boom)
+    assert intent.detect_reach_intent("Essen出发90分钟车程内") is None

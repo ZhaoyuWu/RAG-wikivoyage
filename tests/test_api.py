@@ -281,3 +281,21 @@ def test_plan_stream_passes_history_through(client, monkeypatch):
     assert r.status_code == 200
     assert seen["query"] == "改成开车"
     assert seen["history"] == history
+
+
+# --- Intent classification --------------------------------------------------
+
+def test_intent_endpoint_classifies(client, monkeypatch):
+    app.dependency_overrides[require_user] = _as("admin")
+    import src.intent as intent
+    monkeypatch.setattr(intent, "geocode",
+                        lambda p: {"name": p} if p == "Essen" else None)
+
+    r = client.post("/intent", json={"query": "essen周边1日游"})
+    assert r.json() == {"kind": "plan"}
+
+    r = client.post("/intent", json={"query": "Essen出发90分钟车程内有什么城堡"})
+    assert r.json() == {"kind": "reach", "place": "Essen", "minutes": 90}
+
+    r = client.post("/intent", json={"query": "Essen有什么好吃的"})
+    assert r.json() == {"kind": "ask"}

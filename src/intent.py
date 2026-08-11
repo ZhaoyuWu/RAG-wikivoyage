@@ -1,8 +1,14 @@
-"""Lightweight intent detection: is this question really a routing request?
+"""Lightweight intent detection: which pipeline should a free-text query use?
 
-Rules extract candidate place pairs; the corpus gazetteer then validates
-them. Only when both places resolve does the question leave the RAG path,
-so false positives degrade gracefully into normal retrieval.
+Deterministic rules, validated against the corpus gazetteer where a place is
+involved. Detection is deliberately conservative: anything ambiguous falls
+back to the RAG path (which itself detects routing questions), so a false
+positive degrades into a normal answer, never a broken one.
+
+Detectors:
+- detect_route_intent: "A到B怎么去" -> the routing backend (used inside ask).
+- detect_plan_intent:  "essen周边1日游" -> the trip planner.
+- detect_reach_intent: "Essen出发90分钟车程内..." -> reach search.
 """
 
 import re
@@ -23,6 +29,66 @@ _LATIN_PATTERNS = [
 _CAR_MARKERS = ("开车", "自驾", "drive", "driving", "auto", "mit dem auto", "车程")
 _ROUTE_HINTS = ("怎么去", "怎么走", "多久", "多长时间", "nach", "how do i get",
                 "how long", "wie komme", "到", " to ")
+
+
+# Trip-planning language. Strong tokens fire alone; a bare day count ("三天")
+# needs trip-flavoured company so "三天前问过的" stays on the RAG path.
+_STRONG_PLAN = re.compile(
+    r"[一二两三四五六七八九十\d]\s*日游|周边游|行程|旅[行游]计划|游玩计划|"
+    r"itinerary|day ?trip|tages(?:tour|ausflug)", re.IGNORECASE)
+_DAY_COUNT = re.compile(r"[一二两三四五六七八九十\d]\s*(?:天|日|days?|tage)", re.IGNORECASE)
+_TRIP_FLAVOUR = re.compile(r"[游玩逛]|出发|计划|安排|plan|trip|reise", re.IGNORECASE)
+
+
+def detect_plan_intent(question: str) -> bool:
+    """True when the question asks for an itinerary, not an answer."""
+    if _STRONG_PLAN.search(question):
+        return True
+    return bool(_DAY_COUNT.search(question) and _TRIP_FLAVOUR.search(question))
+
+
+# Reach: a drive-time budget plus a resolvable centre.
+_TIME_BUDGET = re.compile(
+    r"(?P<n>\d+|半|[一二两三四五六七八九十]+)\s*(?:个)?\s*"
+    r"(?P<u>小时|分钟|min(?:ute[ns]?)?\b|h\b|stunden?)", re.IGNORECASE)
+_REACH_MARKERS = ("车程", "以内", "之内", "能到", "可达", "范围", "内",
+                  "drive", "erreichbar", "reachable", "within")
+_CENTER_PATTERNS = [
+    re.compile(r"从?\s*(?P<p>[\w()\- ]{2,20}?)\s*(?:出发|周边|附近|为中心)"),
+    re.compile(r"(?:around|von|from)\s+(?P<p>[\w()\- ]{2,20}?)(?:\s|,|$)", re.IGNORECASE),
+]
+_CN_SMALL = {"半": 0.5, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5}
+
+
+def detect_reach_intent(question: str) -> dict | None:
+    """Return {place, minutes} when the question limits itself to a drive-time
+    budget around a place that resolves in the gazetteer; else None."""
+    m = _TIME_BUDGET.search(question)
+    if not m:
+        return None
+    lowered = question.lower()
+    if not any(k in question or k in lowered for k in _REACH_MARKERS):
+        return None
+
+    n = m.group("n")
+    value = float(n) if n.isdigit() else _CN_SMALL.get(n)
+    if value is None:
+        return None
+    unit = m.group("u").lower()
+    minutes = value * 60 if unit.startswith(("小时", "h", "stund")) else value
+    minutes = int(max(15, min(minutes, 120)))
+
+    for pattern in _CENTER_PATTERNS:
+        mm = pattern.search(question)
+        if not mm:
+            continue
+        place = mm.group("p").strip()
+        try:
+            if geocode(place):
+                return {"place": place, "minutes": minutes}
+        except Exception:
+            return None  # gazetteer unavailable: stay on the RAG path
+    return None
 
 
 def detect_route_intent(question: str) -> dict | None:
