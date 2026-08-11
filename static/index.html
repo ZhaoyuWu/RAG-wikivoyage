@@ -139,6 +139,30 @@
     border-radius: 10px; padding: .55rem .75rem; cursor: pointer; font-size: .9rem;
   }
   #chattools button:hover { color: var(--accent); border-color: var(--accent); filter: none; }
+  /* Photos (Wikimedia, fetched by the browser) and Maps deep links */
+  .hitcard { display: flex; gap: .9rem; align-items: flex-start; }
+  .hitcard .thumbbox { flex-shrink: 0; }
+  .hitcard .thumb {
+    width: 112px; height: 84px; object-fit: cover; display: block;
+    border-radius: 8px; border: 1px solid var(--border);
+  }
+  .hitcard .hitbody { min-width: 0; flex: 1; }
+  .gmap { color: var(--muted); font-size: .78rem; text-decoration: none; white-space: nowrap; }
+  .gmap:hover { color: var(--accent); }
+  .stoprow { display: flex; gap: .6rem; overflow-x: auto; padding: .2rem 0 .6rem; }
+  .stopfig { flex: 0 0 150px; margin: 0; }
+  .stopfig img {
+    width: 150px; height: 100px; object-fit: cover; display: block;
+    border-radius: 10px; border: 1px solid var(--border); box-shadow: var(--shadow);
+  }
+  .stopfig figcaption {
+    font-size: .72rem; color: var(--muted); margin-top: .2rem;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .popimg img {
+    width: 210px; max-height: 130px; object-fit: cover; display: block;
+    border-radius: 8px; margin-top: .4rem;
+  }
 </style>
 </head>
 <body>
@@ -259,6 +283,50 @@ async function doLogin() {
   init();
 }
 
+// ---- Photos: Wikimedia thumbnails, fetched by the BROWSER only ----
+// The corpus is Wikivoyage, so its own article titles resolve to page images
+// (the wikivoyage banner, else the wikipedia lead image); POIs without a page
+// fall back to the nearest Commons photo by coordinate. No keys, no backend
+// involvement: only a title or a coordinate ever leaves the browser.
+const thumbCache = new Map();
+
+async function wikiThumb(title, geo) {
+  const key = title || (geo ? `${geo.lat},${geo.lon}` : null);
+  if (!key) return null;
+  if (thumbCache.has(key)) return thumbCache.get(key);
+  const promise = (async () => {
+    for (const host of ["de.wikivoyage.org", "de.wikipedia.org"]) {
+      if (!title) break;
+      try {
+        const u = `https://${host}/w/api.php?action=query&format=json&origin=*`
+          + `&redirects=1&prop=pageimages&piprop=thumbnail&pithumbsize=480`
+          + `&titles=${encodeURIComponent(title)}`;
+        const d = await (await fetch(u)).json();
+        const page = Object.values((d.query || {}).pages || {})[0];
+        if (page && page.thumbnail) return page.thumbnail.source;
+      } catch {}
+    }
+    if (geo) {
+      try {
+        const u = `https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*`
+          + `&generator=geosearch&ggscoord=${geo.lat}%7C${geo.lon}&ggsradius=300`
+          + `&ggslimit=1&ggsnamespace=6&prop=imageinfo&iiprop=url&iiurlwidth=480`;
+        const d = await (await fetch(u)).json();
+        const page = Object.values((d.query || {}).pages || {})[0];
+        const info = page && page.imageinfo && page.imageinfo[0];
+        if (info) return info.thumburl || info.url;
+      } catch {}
+    }
+    return null;
+  })();
+  thumbCache.set(key, promise);
+  return promise;
+}
+
+const gmapsLink = (lat, lon) =>
+  `<a class="gmap" target="_blank" rel="noopener" `
+  + `href="https://www.google.com/maps?q=${lat},${lon}">Maps ↗</a>`;
+
 // ---- Map ----
 let map = null, poiLayer = null, geoLayer = null, routeLayer = null, reachLayer = null;
 let geoFilter = null, picking = false;
@@ -278,6 +346,26 @@ function ensureMap() {
     geoLayer = L.layerGroup().addTo(map);
     routeLayer = L.layerGroup().addTo(map);
     reachLayer = L.layerGroup().addTo(map);
+    // Any popup carrying a .popimg placeholder gets its photo lazily, on
+    // first open, so pins stay cheap until someone actually looks.
+    map.on("popupopen", e => {
+      const box = e.popup.getElement().querySelector(".popimg");
+      if (!box || box.dataset.done) return;
+      box.dataset.done = "1";
+      const geo = box.dataset.lat
+        ? { lat: +box.dataset.lat, lon: +box.dataset.lon } : null;
+      wikiThumb(box.dataset.title || null, geo).then(src => {
+        if (!src) return;
+        const img = new Image();
+        img.alt = "";
+        img.src = src;
+        // Just append — never popup.update(): Leaflet re-renders string
+        // content from scratch on update, which would wipe this very image
+        // (and the done flag) right after it loads. The CSS fixes the image
+        // size, so the popup grows without re-measuring.
+        box.appendChild(img);
+      });
+    });
     map.on("click", e => {
       // In Reach mode, a map click sets the isochrone centre and paints.
       if (document.querySelector("input[name=mode]:checked").value === "reach") {
@@ -432,24 +520,38 @@ async function runReachSearch(opts = {}) {
 }
 
 function renderReachHits(d) {
-  $("results").innerHTML = d.hits.length ? d.hits.map(h => `
-    <div class="card">
-      <div class="meta">
-        <span class="dur">🚗 ${h.drive_min} min</span>
-        <span class="score">${h.score.toFixed(3)}</span>
-        <span class="src">${esc(h.file)} :: ${esc(h.heading)}</span>
+  $("results").innerHTML = d.hits.length ? d.hits.map((h, i) => `
+    <div class="card hitcard">
+      <span class="thumbbox" style="display:none"><img class="thumb" alt="" loading="lazy" data-i="${i}"></span>
+      <div class="hitbody">
+        <div class="meta">
+          <span class="dur">🚗 ${h.drive_min} min</span>
+          <span class="score">${h.score.toFixed(3)}</span>
+          <span class="src">${esc(h.file)} :: ${esc(h.heading)}</span>
+          ${h.geo ? gmapsLink(h.geo.lat, h.geo.lon) : ""}
+        </div>
+        <p>${esc(h.text)}</p>
       </div>
-      <p>${esc(h.text)}</p>
     </div>`).join("")
     : `<div class="card"><p>Nothing reachable within ${d.minutes} min — try a bigger budget.</p></div>`;
+  $("results").querySelectorAll("img.thumb").forEach(img => {
+    const h = d.hits[+img.dataset.i];
+    wikiThumb(h.file, h.geo).then(src => {
+      if (!src) return;
+      img.src = src;
+      img.closest(".thumbbox").style.display = "";
+    });
+  });
 
   // Pins coloured by each point's own time band; the dashed circle shows what
   // a naive straight-line filter would have claimed as "within reach".
   poiLayer.clearLayers();
+  // interactive:false — this ring is pure annotation; it must never swallow
+  // clicks meant for the pins beneath it (its tooltip moved to the legend
+  // line in #status instead).
   L.circle([d.center.lat, d.center.lon], { radius: d.radius_km * 1000,
-    color: "#64748b", weight: 1.5, dashArray: "6 6", fillOpacity: 0 })
-    .bindTooltip(`straight-line ${d.radius_km} km — what a naive radius filter claims`)
-    .addTo(poiLayer);
+    color: "#64748b", weight: 1.5, dashArray: "6 6", fillOpacity: 0,
+    interactive: false }).addTo(poiLayer);
   const seen = new Set();
   d.hits.forEach(h => {
     const pts = (h.pois && h.pois.length) ? h.pois
@@ -461,8 +563,10 @@ function renderReachHits(d) {
       L.circleMarker([p.lat, p.lon], {
         radius: 7, color: "#ffffff", weight: 1.5,
         fillColor: REACH_COLORS[bandForMin(p.drive_min)], fillOpacity: .95,
-      }).bindPopup(`<b>${esc(p.name)}</b><br>🚗 ${p.drive_min} min<br>`
-                   + `<small>${esc(h.file)}</small>`).addTo(poiLayer);
+      }).bindPopup(`<b>${esc(p.name)}</b><br>🚗 ${p.drive_min} min · ${gmapsLink(p.lat, p.lon)}<br>`
+                   + `<small>${esc(h.file)}</small>`
+                   + `<div class="popimg" data-title="${esc(p.name)}" data-lat="${p.lat}" data-lon="${p.lon}"></div>`)
+        .addTo(poiLayer);
     });
   });
 }
@@ -543,7 +647,9 @@ function renderAlongResult(d, container) {
   // Detour stops as distinct pins off the main line.
   d.stops.forEach((s, i) => {
     if (s.geo) L.marker([s.geo.lat, s.geo.lon])
-      .bindPopup(`${i + 1}. ${esc(s.file)} (+${s.detour_km} km)`).addTo(poiLayer);
+      .bindPopup(`${i + 1}. ${esc(s.file)} (+${s.detour_km} km) · ${gmapsLink(s.geo.lat, s.geo.lon)}`
+                 + `<div class="popimg" data-title="${esc(s.file)}" data-lat="${s.geo.lat}" data-lon="${s.geo.lon}"></div>`)
+      .addTo(poiLayer);
   });
   const group = L.featureGroup([a, b,
     ...d.stops.filter(s => s.geo).map(s => L.marker([s.geo.lat, s.geo.lon]))]);
@@ -873,7 +979,9 @@ function renderPlanRoute(origin, stops) {
     const pts = origin ? [[origin.lat, origin.lon]] : [];
     byDay[day].forEach((s, i) => {
       L.marker([s.geo.lat, s.geo.lon])
-        .bindPopup(`Day ${day} · ${i + 1}. ${esc(s.file)}`).addTo(routeLayer);
+        .bindPopup(`Day ${day} · ${i + 1}. ${esc(s.file)} · ${gmapsLink(s.geo.lat, s.geo.lon)}`
+                   + `<div class="popimg" data-title="${esc(s.file)}" data-lat="${s.geo.lat}" data-lon="${s.geo.lon}"></div>`)
+        .addTo(routeLayer);
       pts.push([s.geo.lat, s.geo.lon]);
       all.push([s.geo.lat, s.geo.lon]);
     });
@@ -945,6 +1053,23 @@ async function runPlanStream(body, t0) {
           answerText.textContent = ev.answer;
           if (ev.stops && ev.stops.length) {
             renderPlanRoute(ev.origin || planOrigin, ev.stops);
+            // A photo strip of the stops, day-coloured like the map lines.
+            const strip = el("div");
+            strip.className = "stoprow";
+            strip.innerHTML = ev.stops.map((s, i) => `
+              <figure class="stopfig">
+                <img alt="" loading="lazy" data-i="${i}"
+                     style="border-bottom: 3px solid ${DAY_COLORS[((s.day || 1) - 1) % DAY_COLORS.length]}">
+                <figcaption>Day ${s.day} · ${esc(s.file)}</figcaption>
+              </figure>`).join("");
+            turn.appendChild(strip);
+            strip.querySelectorAll("img").forEach(img => {
+              const s = ev.stops[+img.dataset.i];
+              wikiThumb(s.file, s.geo).then(src => {
+                if (src) img.src = src;
+                else img.closest("figure").remove();
+              });
+            });
           }
           turn.querySelector("details").removeAttribute("open");
           turn.querySelector("summary").textContent = "How this itinerary was planned";

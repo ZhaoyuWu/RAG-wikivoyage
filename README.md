@@ -47,7 +47,9 @@ Reach also searches. Type a query next to the time budget and retrieval runs ins
 
 ![Reach search: castles within 90 minutes of Essen](assets/reach-search-essen.png)
 
-Boundary note: the AI pipeline (embedding, retrieval, generation) stays fully local. Map tiles and routing calls go to public services and carry only place names and coordinates, never corpus content.
+Results carry photos: the browser resolves each stop against Wikimedia (the Wikivoyage page image, falling back to the Wikipedia lead image, falling back to the nearest Commons photo by coordinate) and every pin links straight to Google Maps. No keys, no image search API, and the backend is not involved.
+
+Boundary note: the AI pipeline (embedding, retrieval, generation) stays fully local. Map tiles, routing calls and photo lookups go to public services from the browser and carry only place names and coordinates, never corpus content.
 
 ## Architecture
 
