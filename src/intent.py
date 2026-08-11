@@ -49,9 +49,14 @@ def detect_plan_intent(question: str) -> bool:
     return bool(_DAY_COUNT.search(question) and _TRIP_FLAVOUR.search(question))
 
 
-# Along-route: an A-to-B pair plus corridor language ("沿途", "on the way").
+# Along-route: an A-to-B pair plus corridor language ("沿途", "on the way")
+# OR sight-seeking language ("有什么景点") — "from A to B, what is there to
+# see" implies the corridor even without the word for it. Plain routing
+# questions ("怎么去", "多久") carry neither and stay on the ask path.
 _ALONG_MARKERS = ("沿途", "路上", "途中", "顺路", "一路",
                   "along the way", "on the way", "unterwegs", "entlang")
+_ALONG_SIGHTS = ("景点", "好玩", "值得", "看什么", "玩什么", "看的", "玩的",
+                 "sights", "worth seeing", "what to see", "sehenswert")
 _ALONG_PAIRS = [
     re.compile(r"从\s*(?P<a>[\w()\- ]{2,30}?)\s*(?:到|去|至)\s*"
                r"(?P<b>[\w()\- ]{2,30}?)(?:的|,|，|。|\s|沿途|路上|途中|顺路|一路|有|$)"),
@@ -70,7 +75,8 @@ def detect_along_intent(question: str) -> dict | None:
     gazetteer; else None. Interests are literal keywords from the planner's
     vocabulary, defaulting to sights."""
     lowered = question.lower()
-    if not any(m in question or m in lowered for m in _ALONG_MARKERS):
+    if not any(m in question or m in lowered
+               for m in _ALONG_MARKERS + _ALONG_SIGHTS):
         return None
     for pattern in _ALONG_PAIRS:
         m = pattern.search(question)
@@ -150,8 +156,9 @@ _LLM_CLASSIFY_SYSTEM = (
     "kind=along: what lies between two places on the way; fill from_place "
     "and to_place, plus short interest keywords when stated.\n"
     "kind=ask: everything else, including plain A-to-B routing questions.\n"
-    "Keep place names in their original spelling; omit fields that do not "
-    "apply."
+    "Write every place name in its common German spelling (科隆 -> Köln, "
+    "Cologne -> Köln) — they are resolved against a German gazetteer. Omit "
+    "fields that do not apply."
 )
 
 

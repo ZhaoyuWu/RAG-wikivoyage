@@ -194,3 +194,13 @@ def test_llm_fallback_rejects_bad_json_and_unknown_places(monkeypatch):
                        '"to_place": "Berlin"}')) is None
     # kind=ask (or anything unrecognised) means no upgrade.
     assert intent.classify_with_llm("z", _gen_json('{"kind": "ask"}')) is None
+
+
+def test_along_fires_on_sight_words_without_corridor_word(monkeypatch):
+    known = {"米尔海姆", "科隆"}
+    monkeypatch.setattr(intent, "geocode",
+                        lambda p: {"name": p} if p in known else None)
+    r = intent.detect_along_intent("从米尔海姆到科隆有什么景点")
+    assert r["from_place"] == "米尔海姆" and r["to_place"] == "科隆"
+    # Plain routing question: no corridor and no sight word -> not along.
+    assert intent.detect_along_intent("从米尔海姆到科隆怎么去") is None

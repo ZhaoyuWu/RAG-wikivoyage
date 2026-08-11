@@ -56,6 +56,11 @@ def geocode(place: str) -> dict | None:
     for title, geo in places.items():
         if title.lower() == lowered:
             return {"name": title, **geo}
+    # Transliterated names ("科隆") resolve through the alias table, so a
+    # Chinese place name geocodes exactly like its German spelling would.
+    from .aliases import ALIASES
+    if place in ALIASES:
+        return geocode(ALIASES[place])
     # Prefix match as a fallback (e.g. "Essen" vs "Essen (Ruhr)")
     candidates = [t for t in places if t.lower().startswith(lowered)]
     if candidates:

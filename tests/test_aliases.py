@@ -28,3 +28,16 @@ def test_longest_alias_wins():
 def test_region_alias():
     assert "Harz" in expand_query("哈茨徒步路线")
     assert "Schwarzwald" in expand_query("黑森林一日游")
+
+
+def test_geocode_resolves_transliterations(monkeypatch):
+    # "科隆" must geocode exactly like "Köln": the alias table bridges the
+    # Chinese spelling into the German gazetteer.
+    import src.routing as routing
+    monkeypatch.setattr(routing, "_gazetteer", lambda: {
+        "Köln": {"lat": 50.94, "lon": 6.96},
+        "Mülheim an der Ruhr": {"lat": 51.43, "lon": 6.88},
+    })
+    assert routing.geocode("科隆")["name"] == "Köln"
+    assert routing.geocode("米尔海姆")["name"] == "Mülheim an der Ruhr"
+    assert routing.geocode("亚特兰蒂斯") is None
