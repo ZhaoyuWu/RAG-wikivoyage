@@ -157,3 +157,40 @@ def test_along_english_on_the_way(monkeypatch):
     monkeypatch.setattr(intent, "geocode", _fake_geocode)
     r = intent.detect_along_intent("driving from Essen to Berlin, what is on the way?")
     assert r["from_place"] == "Essen" and r["to_place"] == "Berlin"
+
+
+# --- LLM fallback classifier -------------------------------------------------
+
+def _gen_json(payload):
+    def gen(context, question, history, system):
+        yield payload
+    return gen
+
+
+def test_llm_fallback_classifies_french_along(monkeypatch):
+    monkeypatch.setattr(intent, "geocode", _fake_geocode)
+    r = intent.classify_with_llm(
+        "Qu'y a-t-il à voir en route d'Essen à Berlin ?",
+        _gen_json('{"kind": "along", "from_place": "Essen", '
+                  '"to_place": "Berlin", "interests": ["châteaux"]}'))
+    assert r["kind"] == "along"
+    assert r["from_place"] == "Essen" and r["to_place"] == "Berlin"
+    assert r["interests"] == ["châteaux"]
+
+
+def test_llm_fallback_reach_clamps_minutes(monkeypatch):
+    monkeypatch.setattr(intent, "geocode", _fake_geocode)
+    r = intent.classify_with_llm(
+        "kaleler, Essen'e 3 saat mesafede",
+        _gen_json('{"kind": "reach", "place": "Essen", "minutes": 180}'))
+    assert r == {"kind": "reach", "place": "Essen", "minutes": 120}
+
+
+def test_llm_fallback_rejects_bad_json_and_unknown_places(monkeypatch):
+    monkeypatch.setattr(intent, "geocode", _fake_geocode)
+    assert intent.classify_with_llm("x", _gen_json("not json at all")) is None
+    assert intent.classify_with_llm(
+        "y", _gen_json('{"kind": "along", "from_place": "Atlantis", '
+                       '"to_place": "Berlin"}')) is None
+    # kind=ask (or anything unrecognised) means no upgrade.
+    assert intent.classify_with_llm("z", _gen_json('{"kind": "ask"}')) is None

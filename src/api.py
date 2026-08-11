@@ -424,6 +424,11 @@ def isochrone_endpoint(req: IsochroneRequest, ident: dict = Depends(require_user
 
 class IntentRequest(BaseModel):
     query: str = Field(min_length=1)
+    collection: str | None = Field(
+        default=None,
+        description="Current collection; decides whether the LLM fallback "
+                    "classifier may run (cloud collections only).",
+    )
 
 
 @app.post("/intent")
@@ -445,6 +450,17 @@ def intent_endpoint(req: IntentRequest, ident: dict = Depends(require_user)):
     reach = detect_reach_intent(req.query)
     if reach:
         return {"kind": "reach", **reach}
+    # The rules only speak zh/en/de. For anything else, let the fast cloud
+    # model classify — but only when this collection may use the cloud at
+    # all (private collections never send queries off the machine).
+    from .intent import classify_with_llm
+    from .rag import _pick_provider
+
+    provider, _model, generate = _pick_provider(req.collection)
+    if provider == "groq":
+        llm = classify_with_llm(req.query, generate)
+        if llm:
+            return llm
     return {"kind": "ask"}
 
 

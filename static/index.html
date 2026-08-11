@@ -1203,7 +1203,7 @@ async function run() {
     try {
       const r = await api("/intent", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query, collection: $("collection").value }),
       });
       if (r.ok) intent = await r.json();
     } catch {}

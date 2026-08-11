@@ -12,6 +12,7 @@ Detectors:
 - detect_along_intent: "从A到B沿途有什么景点" -> corridor search along the drive.
 """
 
+import json
 import re
 
 from .routing import geocode
@@ -130,6 +131,60 @@ def detect_reach_intent(question: str) -> dict | None:
                 return {"place": place, "minutes": minutes}
         except Exception:
             return None  # gazetteer unavailable: stay on the RAG path
+    return None
+
+
+# LLM fallback: the rules above only speak zh/en/de. When they miss and a
+# fast cloud model is available, one classification call handles ANY language.
+# Same philosophy as guard.py: rules first (free, predictable), LLM backstop.
+# Extracted places are still gazetteer-validated, and any parse failure means
+# "ask" — the fallback can only upgrade a query, never break one.
+_LLM_CLASSIFY_SYSTEM = (
+    "You classify one query for a travel app. The query may be in ANY "
+    "language. Reply with ONLY a JSON object, no prose:\n"
+    '{"kind": "ask" | "plan" | "reach" | "along", "from_place": "...", '
+    '"to_place": "...", "place": "...", "minutes": 0, "interests": ["..."]}\n'
+    "kind=plan: the user wants a trip itinerary (day trip, N days).\n"
+    "kind=reach: results limited to a travel-time budget around one place "
+    "('castles within 90 minutes of Essen'); fill place and minutes.\n"
+    "kind=along: what lies between two places on the way; fill from_place "
+    "and to_place, plus short interest keywords when stated.\n"
+    "kind=ask: everything else, including plain A-to-B routing questions.\n"
+    "Keep place names in their original spelling; omit fields that do not "
+    "apply."
+)
+
+
+def classify_with_llm(question: str, generate) -> dict | None:
+    """Ask the (cloud) model to classify a query the rules could not, in any
+    language. Returns the same shapes the rule detectors produce, or None
+    when the answer does not survive validation."""
+    try:
+        raw = "".join(generate(None, question, None, _LLM_CLASSIFY_SYSTEM)).strip()
+        data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
+    except Exception:
+        return None
+    kind = data.get("kind")
+    try:
+        if kind == "along":
+            a = (data.get("from_place") or "").strip()
+            b = (data.get("to_place") or "").strip()
+            if a and b and geocode(a) and geocode(b):
+                interests = [str(x).strip() for x in (data.get("interests") or [])
+                             if str(x).strip()][:3]
+                return {"kind": "along", "from_place": a, "to_place": b,
+                        "interests": interests or ["景点"]}
+        elif kind == "reach":
+            place = (data.get("place") or "").strip()
+            minutes = data.get("minutes")
+            if place and isinstance(minutes, (int, float)) and minutes \
+                    and geocode(place):
+                return {"kind": "reach", "place": place,
+                        "minutes": int(max(15, min(minutes, 120)))}
+        elif kind == "plan":
+            return {"kind": "plan"}
+    except Exception:
+        return None
     return None
 
 

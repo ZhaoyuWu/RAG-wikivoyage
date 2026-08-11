@@ -330,3 +330,32 @@ def test_intent_endpoint_classifies_along(client, monkeypatch):
     body = r.json()
     assert body["kind"] == "along"
     assert body["from_place"] == "Essen" and body["to_place"] == "Goslar"
+
+
+def test_intent_llm_fallback_only_for_cloud_collections(client, monkeypatch):
+    app.dependency_overrides[require_user] = _as("admin")
+    import src.intent as intent
+    import src.rag as rag
+    monkeypatch.setattr(intent, "geocode", lambda p: {"name": p})
+
+    calls = {"n": 0}
+
+    def fake_generate(context, question, history, system):
+        calls["n"] += 1
+        yield '{"kind": "plan"}'
+
+    # Cloud collection: the fallback runs and upgrades the query.
+    monkeypatch.setattr(rag, "_pick_provider",
+                        lambda c: ("groq", "llama", fake_generate))
+    r = client.post("/intent", json={"query": "Trois jours autour d'Essen",
+                                     "collection": "wikivoyage"})
+    assert r.json() == {"kind": "plan"}
+    assert calls["n"] == 1
+
+    # Private collection resolves to a local provider: no cloud call, ask.
+    monkeypatch.setattr(rag, "_pick_provider",
+                        lambda c: ("ollama", "qwen", fake_generate))
+    r = client.post("/intent", json={"query": "Trois jours autour d'Essen",
+                                     "collection": "vault"})
+    assert r.json() == {"kind": "ask"}
+    assert calls["n"] == 1
