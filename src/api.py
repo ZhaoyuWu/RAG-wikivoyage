@@ -205,6 +205,11 @@ class AskRequest(BaseModel):
         description="Prior conversation turns [{role, content}], newest last.",
         max_length=12,
     )
+    geo: GeoFilter | None = Field(
+        default=None,
+        description="Optional geo-radius filter applied to retrieval, "
+                    "e.g. {lat: 51.45, lon: 7.01, radius_km: 50}.",
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -634,6 +639,7 @@ def ask_stream_endpoint(req: AskRequest, ident: dict = Depends(require_user)):
                 req.query, top_k=req.top_k, category=req.category,
                 collection=req.collection, history=req.history,
                 deny_categories=deny,
+                geo=req.geo.model_dump() if req.geo else None,
             ):
                 etype = event["type"]
                 if etype == "rewrite":

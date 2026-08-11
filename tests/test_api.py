@@ -299,3 +299,24 @@ def test_intent_endpoint_classifies(client, monkeypatch):
 
     r = client.post("/intent", json={"query": "Essen有什么好吃的"})
     assert r.json() == {"kind": "ask"}
+
+
+# --- Geo filter reaches ask retrieval ---------------------------------------
+
+def test_ask_stream_forwards_geo_filter(client, monkeypatch):
+    app.dependency_overrides[require_user] = _as("admin")
+    monkeypatch.setattr(api, "_check_collection", lambda c: None)
+
+    seen = {}
+
+    def fake_ask_stream(q, **k):
+        seen.update(k)
+        yield {"type": "done", "answer": "ok", "sources": [], "trace": None}
+
+    monkeypatch.setattr(api, "ask_stream", fake_ask_stream)
+    r = client.post("/ask/stream", json={
+        "query": "Burgen im Harz",
+        "geo": {"lat": 51.75, "lon": 10.63, "radius_km": 40},
+    })
+    assert r.status_code == 200
+    assert seen["geo"] == {"lat": 51.75, "lon": 10.63, "radius_km": 40.0}

@@ -343,6 +343,7 @@ def ask_stream(
     collection: str | None = None,
     history: list[dict] | None = None,
     deny_categories: list[str] | None = None,
+    geo: dict | None = None,
 ):
     """Yield pipeline events: retrieval trace, answer deltas, final summary."""
     import time
@@ -403,7 +404,8 @@ def ask_stream(
 
     t0 = time.perf_counter()
     hits = hybrid_search(search_query, top_k=top_k, category=category,
-                         collection=collection, deny_categories=deny_categories)
+                         collection=collection, deny_categories=deny_categories,
+                         geo=geo)
     retrieval_ms = round((time.perf_counter() - t0) * 1000)
 
     chunks = [

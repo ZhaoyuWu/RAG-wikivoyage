@@ -114,15 +114,12 @@
 
   <div class="bar">
     <select id="collection" title="Collection"></select>
+    <!-- Auto is the conversation (it routes to answering, planning or reach
+         search by itself); the three pills beside it are tools with their own
+         controls: timetable routing, reachability painting, retrieval X-ray. -->
     <span class="modes">
       <label><input type="radio" name="mode" value="auto" checked><span>✨ Auto</span></label>
-    </span>
-    <button id="modemore" title="Pick a pipeline manually">⚙️</button>
-    <span class="modes" id="modeadv" style="display:none">
-      <label><input type="radio" name="mode" value="search"><span>Search</span></label>
-      <label><input type="radio" name="mode" value="ask"><span>Ask</span></label>
       <label><input type="radio" name="mode" value="route"><span>Route</span></label>
-      <label><input type="radio" name="mode" value="plan"><span>🗺️ Plan</span></label>
       <label><input type="radio" name="mode" value="reach"><span>🎨 Reach</span></label>
       <label><input type="radio" name="mode" value="xray"><span>🔬 X-ray</span></label>
     </span>
@@ -136,7 +133,7 @@
     </select>
   </div>
   <div class="bar" id="searchbar">
-    <input type="text" id="query" placeholder="Type a question and press Enter" autofocus>
+    <input type="text" id="query" placeholder="问答 / 行程 / 车程范围,一句话自动识别 — 如:essen周边1日游" autofocus>
     <button id="go">Go</button>
     <button id="newchat" title="Clear conversation">↺ New</button>
     <button id="savechat" title="Save this conversation to the server">💾 Save</button>
@@ -246,7 +243,7 @@ function ensureMap() {
       geoFilter = { lat: e.latlng.lat, lon: e.latlng.lng,
                     radius_km: parseFloat($("radius").value) };
       drawGeoFilter();
-      status(`Location filter set (${geoFilter.radius_km} km radius). Run a search.`);
+      status(`Location filter set (${geoFilter.radius_km} km radius). Ask anything.`);
     });
   }
   setTimeout(() => map.invalidateSize(), 50);
@@ -425,22 +422,6 @@ function renderReachHits(d) {
   });
 }
 
-function plotHits(hits) {
-  const seen = new Set();
-  const markers = [];
-  hits.forEach(h => (h.pois || []).forEach(p => {
-    if (seen.has(p.name)) return;
-    seen.add(p.name);
-    markers.push(L.marker([p.lat, p.lon])
-      .bindPopup(`<b>${esc(p.name)}</b><br><small>${esc(h.file)}</small>`));
-  }));
-  if (!markers.length) return;
-  ensureMap();
-  poiLayer.clearLayers();
-  markers.forEach(m => m.addTo(poiLayer));
-  const group = L.featureGroup(markers);
-  map.fitBounds(group.getBounds().pad(0.2), { maxZoom: 12 });
-}
 const status = (msg, isErr = false) => {
   $("status").innerHTML = msg;
   $("status").className = isErr ? "error" : "";
@@ -456,19 +437,6 @@ async function loadCollections() {
   } catch {
     status("Cannot reach the API. Is uvicorn running?", true);
   }
-}
-
-function renderHits(hits) {
-  if (!hits.length) { $("results").innerHTML = ""; status("No results."); return; }
-  $("results").innerHTML = hits.map(h => `
-    <div class="card">
-      <div class="meta">
-        <span class="score">${h.score.toFixed(3)}</span>
-        <span class="src">${esc(h.file)} :: ${esc(h.heading)}</span>
-      </div>
-      <p>${esc(h.text)}</p>
-    </div>`).join("");
-  plotHits(hits);
 }
 
 async function runRoute() {
@@ -982,47 +950,28 @@ async function run() {
     geo: geoFilter,
   };
   $("go").disabled = true;
-  // ask, plan and auto accumulate a conversation; other modes replace the view
-  if (!["ask", "plan", "auto"].includes(mode)) $("results").innerHTML = "";
   const t0 = Date.now();
   try {
-    if (mode === "auto") {
-      // One box, three pipelines: a cheap deterministic classifier picks
-      // plan / reach / ask (ask detects plain A-to-B routing itself).
-      // Classification is best-effort; any failure just means ask.
-      status(`<span class="spin"></span>Detecting intent…`);
-      let intent = { kind: "ask" };
-      try {
-        const r = await api("/intent", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query }),
-        });
-        if (r.ok) intent = await r.json();
-      } catch {}
-      if (intent.kind === "plan") {
-        await runPlanStream(body, t0);
-      } else if (intent.kind === "reach") {
-        status(`→ 🎨 Reach: ${intent.minutes} min around ${esc(intent.place)}`);
-        await runReachSearch({ query, minutes: intent.minutes, place: intent.place });
-        $("query").value = "";
-      } else {
-        await runAskStream(body, t0);
-      }
-    } else if (mode === "ask") {
-      await runAskStream(body, t0);
-    } else if (mode === "plan") {
-      await runPlanStream(body, t0);
-    } else {
-      status(`<span class="spin"></span>Searching…`);
-      const resp = await api("/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+    // One box, three pipelines: a cheap deterministic classifier picks
+    // plan / reach / ask (ask detects plain A-to-B routing itself).
+    // Classification is best-effort; any failure just means ask.
+    status(`<span class="spin"></span>Detecting intent…`);
+    let intent = { kind: "ask" };
+    try {
+      const r = await api("/intent", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
       });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || resp.statusText);
-      status(`Done in ${((Date.now()-t0)/1000).toFixed(1)}s`);
-      renderHits(data);
+      if (r.ok) intent = await r.json();
+    } catch {}
+    if (intent.kind === "plan") {
+      await runPlanStream(body, t0);
+    } else if (intent.kind === "reach") {
+      status(`→ 🎨 Reach: ${intent.minutes} min around ${esc(intent.place)}`);
+      await runReachSearch({ query, minutes: intent.minutes, place: intent.place });
+      $("query").value = "";
+    } else {
+      await runAskStream(body, t0);
     }
   } catch (e) {
     status("Error: " + esc(e.message), true);
@@ -1053,14 +1002,10 @@ document.querySelectorAll("input[name=mode]").forEach(r =>
     $("searchbar").style.display = (isRoute || isReach) ? "none" : "flex";
     $("routebar").style.display = isRoute ? "flex" : "none";
     $("reachbar").style.display = isReach ? "flex" : "none";
-    $("query").placeholder = r.value === "plan"
-      ? "描述行程,如:从 Essen 出发一天,想看城堡和徒步,不要夜店"
-      : r.value === "xray"
+    $("query").placeholder = r.value === "xray"
       ? "Type a query to see how dense, sparse, RRF and rerank pick the results"
-      : r.value === "auto"
-      ? "问答 / 行程 / 车程范围,一句话自动识别 — 如:essen周边1日游"
-      : "Type a question and press Enter";
-    if (isRoute || isReach || r.value === "plan") ensureMap();
+      : "问答 / 行程 / 车程范围,一句话自动识别 — 如:essen周边1日游";
+    if (isRoute || isReach) ensureMap();
     // X-ray shows a side-by-side pipeline, not the map or a conversation.
     if (r.value === "xray") { $("map").style.display = "none"; $("results").innerHTML = ""; }
     // Leaving reach mode clears the paint so it doesn't linger over results.
@@ -1069,12 +1014,6 @@ document.querySelectorAll("input[name=mode]").forEach(r =>
       if (reachLegend) { map.removeControl(reachLegend); reachLegend = null; }
     }
   }));
-
-// The six manual pipelines live behind the gear; Auto is the front door.
-$("modemore").onclick = () => {
-  const adv = $("modeadv");
-  adv.style.display = adv.style.display === "none" ? "inline-flex" : "none";
-};
 
 $("goreach").onclick = () => runIsochrone();
 $("reachfrom").addEventListener("keydown", e => { if (e.key === "Enter") runIsochrone(); });
@@ -1189,12 +1128,10 @@ document.querySelectorAll("input[name=mode]").forEach(r =>
 async function init() {
   const prefs = loadJSON(PREF_KEY);
   if (prefs.mode) {
+    // A saved mode that no longer exists (search/ask/plan were folded into
+    // Auto) silently falls back to the default.
     const radio = document.querySelector(`input[name=mode][value="${prefs.mode}"]`);
-    if (radio && !radio.checked) {
-      // A restored manual pipeline must be visible, not checked in secret.
-      if (prefs.mode !== "auto") $("modeadv").style.display = "inline-flex";
-      radio.click();
-    }
+    if (radio && !radio.checked) radio.click();
   }
   await loadCollections();
   // Setting the value directly avoids the change handler, which resets the chat.

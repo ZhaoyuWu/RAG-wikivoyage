@@ -19,9 +19,9 @@ Built and tested on two corpora: a personal Obsidian vault (371 chunks) and the 
 
 ## Web UI
 
-A single static page served by the API. Collection switcher, search and ask modes, streaming output, error surfacing. No build tooling, no framework, no keys in the browser.
+A single static page served by the API, built around one input box. A deterministic intent layer classifies each query and dispatches it: itinerary wording runs the trip planner, a drive-time budget runs the reach search, an A-to-B question runs the routing backends, and everything else is answered from retrieval with citations. Three tool views sit beside it for the parts that want their own controls: timetable routing, reachability painting, and a retrieval X-ray. Streaming output, error surfacing, no build tooling, no framework, no keys in the browser.
 
-| Search mode | Ask mode (answer with sources) |
+| Retrieved sources (streaming trace) | Answer with sources |
 |---|---|
 | ![Search results](assets/search-results.png) | ![Answer with citations](assets/ask-answer.png) |
 
