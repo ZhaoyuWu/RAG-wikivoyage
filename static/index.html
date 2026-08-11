@@ -8,47 +8,74 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root {
-    --bg: #f6f7f9; --card: #ffffff; --text: #1c2330; --muted: #67707f;
-    --accent: #2563eb; --accent-soft: #dbeafe; --border: #e3e6eb; --err: #b91c1c;
+    --bg: #f4f6fa; --card: #ffffff; --text: #1a2233; --muted: #667080;
+    --accent: #2563eb; --accent-2: #6d5ae0; --accent-soft: #e5edfc;
+    --border: #e2e7ef; --err: #b91c1c;
+    --radius: 12px;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .07);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #12151b; --card: #1b202a; --text: #e8ebf0; --muted: #8b94a3;
-      --accent: #60a5fa; --accent-soft: #1e3a5f; --border: #2a3140; --err: #f87171;
+      --bg: #0f1319; --card: #181e29; --text: #e8ebf0; --muted: #8b94a3;
+      --accent: #60a5fa; --accent-2: #9d8cf5; --accent-soft: #1e3a5f;
+      --border: #28303f; --err: #f87171;
+      --shadow: 0 1px 3px rgba(0, 0, 0, .45);
     }
   }
   * { box-sizing: border-box; margin: 0; }
   body {
     background: var(--bg); color: var(--text);
     font: 15px/1.6 system-ui, "Segoe UI", sans-serif;
-    max-width: 780px; margin: 0 auto; padding: 2rem 1rem 4rem;
+    max-width: 860px; margin: 0 auto; padding: 2rem 1.2rem 4rem;
   }
-  h1 { font-size: 1.4rem; margin-bottom: .2rem; }
-  .sub { color: var(--muted); font-size: .85rem; margin-bottom: 1.5rem; }
-  .bar { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: .75rem; }
+  header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 1rem; margin-bottom: 1.1rem; flex-wrap: wrap;
+  }
+  h1 { font-size: 1.5rem; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: .85rem; }
+  .bar { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: .7rem; align-items: center; }
   select, input[type=text], input[type=datetime-local] {
     background: var(--card); color: var(--text); border: 1px solid var(--border);
-    border-radius: 8px; padding: .55rem .75rem; font-size: .95rem;
+    border-radius: 10px; padding: .55rem .75rem; font-size: .95rem;
   }
-  #query { flex: 1; min-width: 220px; }
+  input:focus-visible, select:focus-visible {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  input[type=checkbox] { accent-color: var(--accent); }
+  #query { flex: 1; min-width: 220px; padding: .65rem .9rem; }
   button {
-    background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff; border: 0; border-radius: 10px;
     padding: .55rem 1.2rem; font-size: .95rem; cursor: pointer;
+    transition: filter .15s;
   }
+  button:hover { filter: brightness(1.08); }
   button:disabled { opacity: .5; cursor: wait; }
-  .modes { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-  .modes label {
-    padding: .5rem .9rem; cursor: pointer; font-size: .9rem; color: var(--muted);
-    background: var(--card);
+  button.ghost, select.ghost {
+    background: var(--card); color: var(--muted);
+    border: 1px solid var(--border);
   }
+  button.ghost:hover { color: var(--accent); border-color: var(--accent); filter: none; }
+  .modes {
+    display: inline-flex; gap: 2px; background: var(--card);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 3px; box-shadow: var(--shadow);
+  }
+  .modes label {
+    padding: .45rem .95rem; cursor: pointer; font-size: .9rem; color: var(--muted);
+    border-radius: 9px; transition: background .15s, color .15s;
+  }
+  .modes label:hover { color: var(--text); }
   .modes input { display: none; }
   .modes input:checked + span { color: var(--accent); font-weight: 600; }
   .modes label:has(input:checked) { background: var(--accent-soft); }
   #status { color: var(--muted); font-size: .9rem; margin: 1rem 0; min-height: 1.4em; }
   #status.error { color: var(--err); }
   .card {
-    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-    padding: .9rem 1.1rem; margin-bottom: .7rem;
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: .9rem 1.1rem; margin-bottom: .7rem; box-shadow: var(--shadow);
   }
   .card .meta { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; margin-bottom: .35rem; }
   .score {
@@ -87,57 +114,75 @@
   .xray-badge { background: #16a34a22; color: #16a34a; border-radius: 5px;
     padding: .05rem .4rem; font-size: .7rem; margin-left: .3rem; }
   #map {
-    height: 340px; border-radius: 10px; border: 1px solid var(--border);
-    margin-bottom: .8rem; display: none;
+    height: 340px; border-radius: var(--radius); border: 1px solid var(--border);
+    margin-bottom: .8rem; display: none; box-shadow: var(--shadow);
   }
-  #geobtn.active { background: var(--accent-soft); color: var(--accent); }
+  #filterbar { font-size: .9rem; }
+  #filterbar .flabel { color: var(--muted); font-size: .82rem; }
+  #geobtn.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
   #geobtn, #radius {
-    background: var(--card); color: var(--text); border: 1px solid var(--border);
-    border-radius: 8px; padding: .55rem .75rem; font-size: .9rem; cursor: pointer;
+    background: var(--card); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 10px; padding: .45rem .7rem; font-size: .88rem; cursor: pointer;
   }
+  #geobtn:hover { color: var(--accent); border-color: var(--accent); filter: none; }
   #radius { display: none; }
+  #category { padding: .45rem .7rem; font-size: .88rem; width: 10.5rem; }
   .opt { display: flex; gap: .8rem; align-items: baseline; }
   .opt .dur { font-weight: 700; color: var(--accent); white-space: nowrap; }
   .bubble-user {
     background: var(--accent-soft); border-color: transparent;
     margin-left: 20%; margin-top: 1.1rem;
   }
-  #newchat {
+  #chattools { display: inline-flex; gap: .5rem; }
+  #chattools button, #chattools select {
     background: var(--card); color: var(--muted); border: 1px solid var(--border);
-    border-radius: 8px; padding: .55rem .75rem; cursor: pointer; font-size: .9rem;
+    border-radius: 10px; padding: .55rem .75rem; cursor: pointer; font-size: .9rem;
   }
+  #chattools button:hover { color: var(--accent); border-color: var(--accent); filter: none; }
 </style>
 </head>
 <body>
-  <h1>Vault RAG</h1>
-  <div class="sub">Hybrid retrieval over local collections. Ask in any language.</div>
-
-  <div class="bar">
+  <header>
+    <div>
+      <h1>Vault RAG</h1>
+      <div class="sub">Hybrid retrieval over local collections. Ask in any language.</div>
+    </div>
     <select id="collection" title="Collection"></select>
-    <!-- Auto is the conversation (it routes to answering, planning or reach
-         search by itself); the three pills beside it are tools with their own
-         controls: timetable routing, reachability painting, retrieval X-ray. -->
+  </header>
+
+  <!-- Auto is the conversation (it routes each query to answering, planning
+       or reach search by itself); the three pills beside it are tools with
+       controls of their own: timetable routing, reachability painting,
+       retrieval X-ray. -->
+  <div class="bar">
     <span class="modes">
       <label><input type="radio" name="mode" value="auto" checked><span>✨ Auto</span></label>
-      <label><input type="radio" name="mode" value="route"><span>Route</span></label>
+      <label><input type="radio" name="mode" value="route"><span>🚆 Route</span></label>
       <label><input type="radio" name="mode" value="reach"><span>🎨 Reach</span></label>
       <label><input type="radio" name="mode" value="xray"><span>🔬 X-ray</span></label>
     </span>
-    <input type="text" id="category" placeholder="category (optional)" size="14">
-    <button id="geobtn" title="Filter results by map location">📍 near</button>
+  </div>
+  <div class="bar" id="searchbar">
+    <input type="text" id="query" autofocus
+           placeholder="Ask anything — a question, a trip (“day trip around Essen”), a reach (“castles within 90 min”)">
+    <button id="go">Go</button>
+    <span id="chattools">
+      <button id="newchat" title="Clear conversation">↺</button>
+      <button id="savechat" title="Save this conversation to the server">💾</button>
+      <select id="history" title="Load a saved conversation"><option value="">History…</option></select>
+    </span>
+  </div>
+  <!-- Retrieval filters: they scope the Auto conversation only. -->
+  <div class="bar" id="filterbar">
+    <span class="flabel">Filters</span>
+    <input type="text" id="category" placeholder="category, e.g. 工作">
+    <button id="geobtn" title="Constrain retrieval to a circle on the map">📍 near</button>
     <select id="radius">
       <option value="10">10 km</option>
       <option value="25">25 km</option>
       <option value="50" selected>50 km</option>
       <option value="100">100 km</option>
     </select>
-  </div>
-  <div class="bar" id="searchbar">
-    <input type="text" id="query" placeholder="问答 / 行程 / 车程范围,一句话自动识别 — 如:essen周边1日游" autofocus>
-    <button id="go">Go</button>
-    <button id="newchat" title="Clear conversation">↺ New</button>
-    <button id="savechat" title="Save this conversation to the server">💾 Save</button>
-    <select id="history" title="Load a saved conversation"><option value="">History…</option></select>
   </div>
   <div class="bar" id="routebar" style="display:none">
     <input type="text" id="from" placeholder="From (e.g. Essen)" size="16">
@@ -148,8 +193,8 @@
     </select>
     <input type="datetime-local" id="departure" title="Departure time (transit only, empty = now)">
     <label id="alongwrap" title="Show detour-worthy stops along a drive (car only)">
-      <input type="checkbox" id="along"> 顺路看
-      <input type="text" id="alongwhat" placeholder="景点/城堡/美食" size="10" disabled>
+      <input type="checkbox" id="along"> stops along the way
+      <input type="text" id="alongwhat" placeholder="castles / food / 景点" size="12" disabled>
     </label>
     <button id="goroute">Go</button>
   </div>
@@ -163,7 +208,7 @@
     </select>
     <input type="text" id="reachq" placeholder="What to find, e.g. Burgen / 徒步" size="22">
     <button id="goreachq">Search</button>
-    <button id="goreach" title="Just paint the reachability bands">🎨 Paint</button>
+    <button id="goreach" class="ghost" title="Just paint the reachability bands">🎨 Paint</button>
   </div>
 
   <div id="map"></div>
@@ -484,13 +529,13 @@ function renderAlongResult(d, container) {
       </div>
       <p>${esc(s.text)}</p>
     </div>`).join("")
-    : `<div class="card"><p>路线两侧没有找到符合的顺路点,试试放宽兴趣。</p></div>`;
+    : `<div class="card"><p>No detour-worthy stops found along this route — try broader interests.</p></div>`;
 
   ensureMap();
   routeLayer.clearLayers();
   poiLayer.clearLayers();
-  const a = L.marker([d.from.lat, d.from.lon]).bindPopup("出发: " + esc(d.from.name));
-  const b = L.marker([d.to.lat, d.to.lon]).bindPopup("到达: " + esc(d.to.name));
+  const a = L.marker([d.from.lat, d.from.lon]).bindPopup("From: " + esc(d.from.name));
+  const b = L.marker([d.to.lat, d.to.lon]).bindPopup("To: " + esc(d.to.name));
   a.addTo(routeLayer); b.addTo(routeLayer);
   if (d.geometry) {
     L.geoJSON(d.geometry, { style: { color: "#2563eb", weight: 4 } }).addTo(routeLayer);
@@ -816,7 +861,7 @@ function renderPlanRoute(origin, stops) {
   poiLayer.clearLayers();
   const all = [];
   if (origin) {
-    L.marker([origin.lat, origin.lon]).bindPopup("出发: " + esc(origin.name)).addTo(routeLayer);
+    L.marker([origin.lat, origin.lon]).bindPopup("From: " + esc(origin.name)).addTo(routeLayer);
     all.push([origin.lat, origin.lon]);
   }
   // Group stops by day; each day gets its own colour and its own line from
@@ -999,12 +1044,17 @@ document.querySelectorAll("input[name=mode]").forEach(r =>
     if (!r.checked) return;
     const isRoute = r.value === "route";
     const isReach = r.value === "reach";
+    const isAuto = r.value === "auto";
     $("searchbar").style.display = (isRoute || isReach) ? "none" : "flex";
     $("routebar").style.display = isRoute ? "flex" : "none";
     $("reachbar").style.display = isReach ? "flex" : "none";
+    // Conversation trimmings and retrieval filters belong to Auto only:
+    // X-ray shares the input box but is a diagnostic, not a conversation.
+    $("chattools").style.display = isAuto ? "inline-flex" : "none";
+    $("filterbar").style.display = isAuto ? "flex" : "none";
     $("query").placeholder = r.value === "xray"
       ? "Type a query to see how dense, sparse, RRF and rerank pick the results"
-      : "问答 / 行程 / 车程范围,一句话自动识别 — 如:essen周边1日游";
+      : "Ask anything — a question, a trip (“day trip around Essen”), a reach (“castles within 90 min”)";
     if (isRoute || isReach) ensureMap();
     // X-ray shows a side-by-side pipeline, not the map or a conversation.
     if (r.value === "xray") { $("map").style.display = "none"; $("results").innerHTML = ""; }
