@@ -185,6 +185,30 @@ def test_synth_input_formats_durations():
     assert "Origin: Essen" in text
 
 
+def test_gather_keeps_named_pois_capped(monkeypatch):
+    origin = {"lat": 51.0, "lon": 7.0}
+    pois = [{"name": f"POI{i}", "lat": 51.1, "lon": 7.0} for i in range(9)]
+    pois.insert(0, {"lat": 51.1, "lon": 7.0})  # nameless: dropped
+    hit = types.SimpleNamespace(file="A.md", heading="H", score=0.9, text="t",
+                                geo={"lat": 51.1, "lon": 7.0}, pois=pois)
+    monkeypatch.setattr(planner, "hybrid_search", lambda like, **k: [hit])
+    out = planner.gather_candidates(["城堡"], [], origin)
+    assert out[0]["pois"] == [f"POI{i}" for i in range(6)]  # named only, max 6
+
+
+def test_synth_input_lists_sights_when_present():
+    constraints = {"origin": "Essen", "likes": ["城堡"], "mode": "car", "days": 1}
+    day_plans = [{"stops": [
+        {"file": "A", "heading": "H", "text": "desc",
+         "pois": ["Schloss Broich", "Aquarius Wassermuseum"]},
+        {"file": "B", "heading": "H", "text": "desc"},   # no pois key: no line
+    ], "legs": [{"duration_min": 30}, {"duration_min": 20}]}]
+    text = planner._build_synth_input(constraints, day_plans)
+    assert "Sights: Schloss Broich, Aquarius Wassermuseum" in text
+    assert "Notes: desc" in text
+    assert text.count("Sights:") == 1
+
+
 def test_synth_input_zero_duration_is_unknown():
     # 0 is falsy, so the current formatter renders it as "?" — pin that.
     constraints = {"origin": "Essen", "likes": ["城堡"], "mode": "car", "days": 1}

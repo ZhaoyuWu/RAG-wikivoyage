@@ -69,11 +69,15 @@ _PARSE_SYSTEM = (
 )
 
 _SYNTH_SYSTEM = (
-    "You are a travel planner. Given an origin, a list of candidate stops "
-    "with short descriptions, and the travel time between them, write a "
-    "concise day itinerary in the language of the user's request. Give each "
-    "stop a rough time slot and one sentence on why it fits. Be practical. "
-    "Do not invent stops that are not in the list."
+    "You are a travel planner. Given an origin, candidate stops with their "
+    "sights and notes, and the travel time between them, write a day-by-day "
+    "itinerary in the language of the user's request. For every stop: name "
+    "the concrete sights worth seeing there, taken ONLY from its Sights and "
+    "Notes data; suggest how long to stay (e.g. 1-2 h); give an arrival time "
+    "that adds up from the travel times, assuming a 9:00 start. Mention a "
+    "food option when the notes cover one. Never invent stops or sights that "
+    "are not in the data; when a stop has no sight details, keep that stop "
+    "brief instead of guessing."
 )
 
 
@@ -200,7 +204,12 @@ def gather_candidates(likes: list[str], excludes: list[str],
                 by_file[h.file] = {
                     "file": h.file, "heading": h.heading, "score": h.score,
                     "geo": h.geo, "dist_km": round(dist, 1),
-                    "text": h.text[:300], "interest": like,
+                    "text": h.text[:500], "interest": like,
+                    # Named POIs from the chunk itself: the concrete sights
+                    # the synthesizer may cite, so the itinerary can say
+                    # "Schloss Broich" instead of just the town's name.
+                    "pois": [p["name"] for p in (getattr(h, "pois", None) or [])
+                             if p.get("name")][:6],
                 }
     return sorted(by_file.values(), key=lambda c: c["dist_km"])
 
@@ -389,7 +398,10 @@ def _build_synth_input(constraints: dict, day_plans: list[dict]) -> str:
             dur = day["legs"][i]["duration_min"]
             travel = f"{dur // 60}h{dur % 60:02d}m" if dur else "?"
             lines.append(f"{i + 1}. {s['file']} ({s['heading']}, {travel} from "
-                         f"previous) — {s['text'][:150]}")
+                         f"previous)")
+            if s.get("pois"):
+                lines.append(f"   Sights: {', '.join(s['pois'])}")
+            lines.append(f"   Notes: {s['text'][:400]}")
         lines.append("")
     return "\n".join(lines)
 
