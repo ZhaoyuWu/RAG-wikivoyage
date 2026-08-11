@@ -32,7 +32,9 @@
      map takes every remaining pixel of the window. Sticky + viewport-high,
      so the conversation scrolls beside a pinned map. */
   #layout { display: flex; gap: 1.2rem; align-items: flex-start; }
-  /* Map hidden (X-ray, or before first use): the chat breathes wider. */
+  /* Map hidden (X-ray, or before first use): the chat breathes wider AND
+     sits centred, so an ultrawide window frames it instead of dwarfing it. */
+  #layout:not(.with-map) { justify-content: center; }
   #chatpane { flex: 1; min-width: 0; max-width: 1100px; }
   #layout.with-map #chatpane { flex: 0 0 min(46%, 720px); max-width: none; }
   @media (max-width: 980px) {
@@ -44,7 +46,12 @@
     display: flex; justify-content: space-between; align-items: flex-start;
     gap: 1rem; margin-bottom: 1.1rem; flex-wrap: wrap;
   }
-  h1 { font-size: 1.5rem; letter-spacing: -.01em; }
+  h1 {
+    font-size: 1.5rem; letter-spacing: -.01em;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    width: fit-content;
+  }
   .sub { color: var(--muted); font-size: .85rem; }
   .bar { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: .7rem; align-items: center; }
   select, input[type=text], input[type=datetime-local] {
@@ -156,6 +163,19 @@
     border-radius: 10px; padding: .55rem .75rem; cursor: pointer; font-size: .9rem;
   }
   #chattools button:hover { color: var(--accent); border-color: var(--accent); filter: none; }
+  /* One control height across the input row, so nothing looks misaligned. */
+  #searchbar input, #searchbar button, #searchbar select { height: 44px; }
+  /* Empty state: a centred invitation with one example per pipeline. */
+  #hero { text-align: center; padding: 9vh 1rem 1.5rem; }
+  #hero h2 { font-size: 1.45rem; font-weight: 650; letter-spacing: -.015em; margin-bottom: .45rem; }
+  #hero p { color: var(--muted); font-size: .92rem; margin-bottom: 1.6rem; }
+  .chips { display: flex; gap: .6rem; justify-content: center; flex-wrap: wrap; }
+  .chip {
+    background: var(--card); color: var(--muted);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: .5rem 1rem; font-size: .88rem; box-shadow: var(--shadow);
+  }
+  .chip:hover { color: var(--accent); border-color: var(--accent); filter: none; }
   /* Photos (Wikimedia, fetched by the browser) and Maps deep links */
   .hitcard { display: flex; gap: .9rem; align-items: flex-start; }
   .hitcard .thumbbox { flex-shrink: 0; }
@@ -256,6 +276,15 @@
     <button id="goreach" class="ghost" title="Just paint the reachability bands">🎨 Paint</button>
   </div>
 
+  <div id="hero" style="display:none">
+    <h2>Ask your corpus anything</h2>
+    <p>Questions get cited answers · trip wishes become day plans · drive-time budgets become maps</p>
+    <div class="chips">
+      <button class="chip">What is worth seeing in Goslar?</button>
+      <button class="chip">essen周边1日游,开车,想看城堡</button>
+      <button class="chip">Essen出发90分钟车程内的城堡</button>
+    </div>
+  </div>
   <div id="status"></div>
   <div id="results"></div>
   </div><!-- /chatpane -->
@@ -880,6 +909,14 @@ function restoreTurn(t) {
   $("results").prepend(turn);
 }
 
+// The hero invitation shows only where a conversation could start: Auto
+// mode with nothing said yet. Any turn, restore, or mode change re-decides.
+function updateHero() {
+  const mode = document.querySelector("input[name=mode]:checked").value;
+  $("hero").style.display =
+    (mode === "auto" && !savedTurns.length && !$("results").innerHTML) ? "" : "none";
+}
+
 function restoreChat() {
   const saved = loadJSON(CHAT_KEY);
   if (!saved.turns || saved.collection !== $("collection").value) return;
@@ -892,6 +929,7 @@ function restoreChat() {
     }
   }
   if (savedTurns.length) status(`Restored ${savedTurns.length} turn(s).`);
+  updateHero();
 }
 
 async function runAskStream(body, t0) {
@@ -1136,6 +1174,7 @@ async function run() {
   if (mode === "xray") { await runXray(); return; }
   const query = $("query").value.trim();
   if (!query) return;
+  $("hero").style.display = "none";
   const body = {
     query,
     top_k: 5,
@@ -1216,6 +1255,7 @@ document.querySelectorAll("input[name=mode]").forEach(r =>
       reachLayer.clearLayers();
       if (reachLegend) { map.removeControl(reachLegend); reachLegend = null; }
     }
+    updateHero();
   }));
 
 $("goreach").onclick = () => runIsochrone();
@@ -1251,8 +1291,15 @@ function resetChat() {
   localStorage.removeItem(CHAT_KEY);
   $("results").innerHTML = "";
   status("New conversation.");
+  updateHero();
 }
 $("newchat").onclick = resetChat;
+
+// Example chips: one per pipeline; clicking one runs it for real.
+document.querySelectorAll(".chip").forEach(chip => chip.onclick = () => {
+  $("query").value = chip.textContent;
+  run();
+});
 $("loginbtn").onclick = doLogin;
 $("lp").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
 
@@ -1344,6 +1391,7 @@ async function init() {
   }
   restoreChat();
   loadHistory();
+  updateHero();
 }
 init();
 </script>
