@@ -65,7 +65,11 @@ _PARSE_SYSTEM = (
     '"mode": "car" | "transit"}\n'
     "Keep origin as a plain city name. likes/excludes are short keywords "
     "(e.g. 城堡, 徒步, 美食, 夜店). Default mode to transit unless the user "
-    "clearly wants to drive."
+    "clearly wants to drive.\n"
+    "When the conversation history contains an earlier trip request, treat "
+    "the new message as an update to it: carry over the origin, days, likes, "
+    "excludes and mode the user did not change, and apply what they did "
+    "change. Always return the complete updated JSON."
 )
 
 _SYNTH_SYSTEM = (
@@ -117,12 +121,15 @@ def _interests_from_text(query: str) -> list[str]:
     return [kw for kw in INTEREST_TO_HEADING if kw in query][:5]
 
 
-def parse_constraints(query: str, generate) -> dict:
+def parse_constraints(query: str, generate, history: list[dict] | None = None) -> dict:
     """LLM-parse the request into structured constraints, with deterministic
-    fallbacks from the raw text. Raises ValueError if the origin cannot be
-    resolved against the corpus gazetteer."""
+    fallbacks from the raw text. `history` carries earlier turns so a
+    follow-up ("那改成开车" / "加一天") updates the previous request instead
+    of failing on a missing origin. Raises ValueError if the origin cannot
+    be resolved against the corpus gazetteer."""
     try:
-        raw = "".join(generate(None, query, None, _PARSE_SYSTEM)).strip()
+        raw = "".join(generate(None, query, (history or [])[-6:] or None,
+                               _PARSE_SYSTEM)).strip()
         raw = raw[raw.find("{"): raw.rfind("}") + 1]
         data = json.loads(raw)
     except (json.JSONDecodeError, KeyError):
@@ -406,14 +413,17 @@ def _build_synth_input(constraints: dict, day_plans: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def plan_stream(query: str, collection: str | None = None):
+def plan_stream(query: str, collection: str | None = None,
+                history: list[dict] | None = None):
     """Yield planning events: parse, candidates, per-day routes, synthesized
-    text deltas, and a final done event with the map-ready stops."""
+    text deltas, and a final done event with the map-ready stops. `history`
+    (prior turns, newest last) makes follow-ups work: the parse step merges
+    the new message into the previous constraints."""
     provider, model, generate = _pick_provider(collection or PLANNER_COLLECTION)
 
     # 1. Parse the request into structured constraints.
     try:
-        constraints = parse_constraints(query, generate)
+        constraints = parse_constraints(query, generate, history)
     except (ValueError, json.JSONDecodeError) as e:
         yield {"type": "error", "detail": f"无法理解行程请求: {e}"}
         return
@@ -458,7 +468,8 @@ def plan_stream(query: str, collection: str | None = None):
     synth_input = _build_synth_input(constraints, day_plans)
     parts: list[str] = []
     try:
-        for delta in generate(synth_input, query, None, _SYNTH_SYSTEM):
+        for delta in generate(synth_input, query, (history or [])[-4:] or None,
+                              _SYNTH_SYSTEM):
             parts.append(delta)
             yield {"type": "delta", "text": delta}
     except RuntimeError as e:

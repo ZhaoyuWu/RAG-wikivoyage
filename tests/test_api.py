@@ -259,3 +259,25 @@ def test_reach_search_requires_a_centre(client, monkeypatch):
     monkeypatch.setattr(api, "_check_collection", lambda c: None)
     r = client.post("/reach/search", json={"query": "Burgen"})
     assert r.status_code == 422
+
+
+# --- Plan follow-up context -------------------------------------------------
+
+def test_plan_stream_passes_history_through(client, monkeypatch):
+    app.dependency_overrides[require_user] = _as("admin")
+    import src.planner as planner
+
+    seen = {}
+
+    def fake_plan_stream(query, collection=None, history=None):
+        seen["query"], seen["history"] = query, history
+        yield {"type": "done", "answer": "ok", "stops": [], "trace": None}
+
+    monkeypatch.setattr(planner, "plan_stream", fake_plan_stream)
+    history = [{"role": "user", "content": "essen周边1日游"},
+               {"role": "assistant", "content": "…行程…"}]
+    r = client.post("/plan/stream",
+                    json={"query": "改成开车", "history": history})
+    assert r.status_code == 200
+    assert seen["query"] == "改成开车"
+    assert seen["history"] == history

@@ -172,3 +172,44 @@ def test_parse_constraints_rejects_unresolvable_origin():
             planner.parse_constraints("去亚特兰蒂斯", fake_generate)
     finally:
         planner.geocode = orig_geocode
+
+
+def test_parse_constraints_forwards_history_to_llm():
+    # A follow-up turn must reach the parse LLM so it can merge the new
+    # message into the previous constraints (the parse prompt handles the
+    # merge; here we pin the plumbing).
+    seen = {}
+
+    def fake_generate(context, question, history, system):
+        seen["history"] = history
+        yield '{"origin": "Essen", "days": 3, "likes": ["城堡"], '
+        yield '"excludes": [], "mode": "car"}'
+
+    history = [{"role": "user", "content": "从Essen出发三天看城堡"},
+               {"role": "assistant", "content": "…行程…"}]
+    orig_geocode = planner.geocode
+    planner.geocode = lambda name: {"name": name, "lat": 51.45, "lon": 7.01}
+    try:
+        c = planner.parse_constraints("改成开车", fake_generate, history)
+    finally:
+        planner.geocode = orig_geocode
+    assert seen["history"] == history
+    assert c["days"] == 3          # carried over from the merged parse
+    assert c["mode"] == "car"
+
+
+def test_parse_constraints_empty_history_is_none():
+    seen = {}
+
+    def fake_generate(context, question, history, system):
+        seen["history"] = history
+        yield '{"origin": "Essen", "days": 1, "likes": ["景点"], '
+        yield '"excludes": [], "mode": "transit"}'
+
+    orig_geocode = planner.geocode
+    planner.geocode = lambda name: {"name": name, "lat": 51.45, "lon": 7.01}
+    try:
+        planner.parse_constraints("Essen一日游", fake_generate, [])
+    finally:
+        planner.geocode = orig_geocode
+    assert seen["history"] is None

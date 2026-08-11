@@ -886,7 +886,8 @@ async function runPlanStream(body, t0) {
   try {
     const resp = await api("/plan/stream", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: body.query, collection: body.collection }),
+      body: JSON.stringify({ query: body.query, collection: body.collection,
+                             history: chatHistory.slice(-8) }),
     });
     if (!resp.ok) {
       const d = await resp.json().catch(() => ({}));
@@ -933,6 +934,11 @@ async function runPlanStream(body, t0) {
             stats.innerHTML = `Planned ${days} day(s), ${ev.trace.stops} stops from ${ev.trace.candidates} candidates, ${Math.floor(ev.trace.total_travel_min/60)}h ${ev.trace.total_travel_min%60}m total travel, via ${esc(ev.trace.provider)}/${esc(ev.trace.model)}.`;
           }
           status(`Done in ${((Date.now()-t0)/1000).toFixed(1)}s`);
+          // Feed the plan into the conversation memory so the next message
+          // ("那改成开车" / "第二天不要博物馆") updates it instead of
+          // starting from scratch.
+          chatHistory.push({ role: "user", content: body.query });
+          chatHistory.push({ role: "assistant", content: ev.answer.slice(0, 2000) });
           // Make the itinerary saveable/exportable like a conversation.
           savedTurns.push({
             query: body.query, answer: ev.answer,
@@ -970,7 +976,8 @@ async function run() {
     geo: geoFilter,
   };
   $("go").disabled = true;
-  if (mode !== "ask") $("results").innerHTML = "";  // ask mode accumulates a conversation
+  // ask and plan accumulate a conversation; other modes replace the view
+  if (mode !== "ask" && mode !== "plan") $("results").innerHTML = "";
   const t0 = Date.now();
   try {
     if (mode === "ask") {

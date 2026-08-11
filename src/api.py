@@ -495,6 +495,12 @@ class PlanRequest(BaseModel):
         default=None,
         description="Corpus to plan over. Omit for the travel corpus.",
     )
+    history: list[dict] | None = Field(
+        default=None,
+        description="Prior conversation turns [{role, content}], newest last, "
+                    "so a follow-up updates the previous plan.",
+        max_length=12,
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -550,7 +556,8 @@ def plan_stream_endpoint(req: PlanRequest, ident: dict = Depends(require_user)):
 
     def gen():
         try:
-            for event in plan_stream(req.query, collection=req.collection):
+            for event in plan_stream(req.query, collection=req.collection,
+                                     history=req.history):
                 if event["type"] == "done":
                     audit.log_event({
                         "event": "plan", "user": ident["user"], "role": ident["role"],
