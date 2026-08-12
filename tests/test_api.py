@@ -359,3 +359,29 @@ def test_intent_llm_fallback_only_for_cloud_collections(client, monkeypatch):
                                      "collection": "vault"})
     assert r.json() == {"kind": "ask"}
     assert calls["n"] == 1
+
+
+def test_along_endpoint_synthesizes_answer_when_query_given(client, monkeypatch):
+    app.dependency_overrides[require_user] = _as("admin")
+    import src.planner as planner
+
+    fake_result = {"from": {"name": "Mülheim an der Ruhr"},
+                   "to": {"name": "Köln"}, "geometry": None,
+                   "corridor_km": 25.0,
+                   "stops": [{"file": "Ratingen", "heading": "S",
+                              "geo": None, "detour_km": 3.1, "text": "t"}]}
+    monkeypatch.setattr(planner, "along_route",
+                        lambda *a, **k: dict(fake_result))
+    monkeypatch.setattr(planner, "synthesize_along_answer",
+                        lambda query, result, collection=None: f"答:{query}")
+
+    r = client.post("/plan/along", json={
+        "from_place": "米尔海姆", "to_place": "科隆",
+        "query": "从米尔海姆到科隆有什么景点"})
+    assert r.status_code == 200
+    assert r.json()["answer"] == "答:从米尔海姆到科隆有什么景点"
+
+    # Without a query the response stays map-only, no answer key.
+    r = client.post("/plan/along", json={
+        "from_place": "米尔海姆", "to_place": "科隆"})
+    assert "answer" not in r.json()

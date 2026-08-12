@@ -562,6 +562,13 @@ class AlongRouteRequest(BaseModel):
     interests: list[str] = Field(default_factory=list,
                                  description="e.g. ['城堡', '美食']")
     corridor_km: float = Field(default=25.0, gt=0, le=100)
+    query: str | None = Field(
+        default=None,
+        description="The user's original question. When given, the response "
+                    "includes a written answer synthesized from the stops, "
+                    "in the question's language.",
+    )
+    collection: str | None = None
 
     model_config = {
         "json_schema_extra": {
@@ -584,6 +591,17 @@ def plan_along_endpoint(req: AlongRouteRequest, ident: dict = Depends(require_us
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
+    # A tool that draws a map must still answer the question that was asked.
+    # With the original query at hand, synthesize a short written answer
+    # from the stops; failure to do so degrades to the map-only result.
+    if req.query and result["stops"]:
+        from .planner import synthesize_along_answer
+
+        try:
+            result["answer"] = synthesize_along_answer(
+                req.query, result, req.collection)
+        except Exception:
+            pass
     audit.log_event({"event": "along_route", "user": ident["user"],
                      "from": req.from_place, "to": req.to_place,
                      "stops": [s["file"] for s in result["stops"]]})

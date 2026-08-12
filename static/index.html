@@ -1241,18 +1241,35 @@ async function run() {
       // route drawn, detour-worthy stops pinned, photos on hover.
       status(`<span class="spin"></span>🚗 ${esc(intent.from_place)} → ${esc(intent.to_place)}, scanning the corridor…`);
       const turn = el("div");
-      turn.innerHTML = `<div class="card bubble-user"><p>${esc(query)}</p></div><div class="t-along"></div>`;
+      turn.innerHTML = `<div class="card bubble-user"><p>${esc(query)}</p></div>`
+        + `<div class="card t-answer" style="display:none"><p></p></div>`
+        + `<div class="t-along"></div>`;
       $("results").prepend(turn);
       const resp = await api("/plan/along", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ from_place: intent.from_place,
                                to_place: intent.to_place,
-                               interests: intent.interests }),
+                               interests: intent.interests,
+                               query,
+                               collection: $("collection").value }),
       });
       const d = await resp.json();
       if (!resp.ok) throw new Error(d.detail || resp.statusText);
+      if (d.answer) {
+        const card = turn.querySelector(".t-answer");
+        card.style.display = "";
+        card.querySelector("p").textContent = d.answer;
+      }
       renderAlongResult(d, turn.querySelector(".t-along"));
       status(`${esc(d.from.name)} → ${esc(d.to.name)}: ${d.stops.length} stop(s) within ${d.corridor_km} km of the route.`);
+      // Corridor turns join the conversation memory like any other answer,
+      // so a follow-up ("第二个多远?") has this context.
+      chatHistory.push({ role: "user", content: query });
+      chatHistory.push({ role: "assistant",
+                         content: (d.answer || d.stops.map(s => s.file).join(", ")).slice(0, 2000) });
+      savedTurns.push({ query, answer: d.answer || "",
+                        sources: d.stops.map(s => ({ file: s.file, heading: s.heading })) });
+      saveChat();
       $("query").value = "";
     } else if (intent.kind === "plan") {
       await runPlanStream(body, t0);

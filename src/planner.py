@@ -392,6 +392,28 @@ def along_route(from_place: str, to_place: str, interests: list[str],
             "corridor_km": corridor_km, "stops": stops}
 
 
+_ALONG_ANSWER_SYSTEM = (
+    "You answer a question about stops along a driving route. Use ONLY the "
+    "listed stops. Answer in the language of the question, in one short "
+    "paragraph: name each worthwhile stop, what it offers, and how far it "
+    "strays from the route (the +km detour). Do not invent stops."
+)
+
+
+def synthesize_along_answer(query: str, result: dict,
+                            collection: str | None = None) -> str:
+    """A short written answer for an along-route result, so the corridor
+    tool answers the question instead of only drawing it."""
+    provider, _model, generate = _pick_provider(collection or PLANNER_COLLECTION)
+    context = "\n".join(
+        f"- {s['file']} ({s['heading']}, +{s['detour_km']} km detour): "
+        f"{s['text'][:200]}"
+        for s in result["stops"])
+    context = (f"Route: {result['from']['name']} -> {result['to']['name']}\n"
+               f"{context}")
+    return "".join(generate(context, query, None, _ALONG_ANSWER_SYSTEM)).strip()
+
+
 # A multi-day trip can reach farther than a day trip, so the search radius
 # grows with the number of days (capped so it stays regional).
 def _radius_for_days(days: int) -> float:
