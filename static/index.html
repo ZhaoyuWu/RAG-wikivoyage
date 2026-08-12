@@ -200,10 +200,19 @@
     font-size: .72rem; color: var(--muted); margin-top: .2rem;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  /* Popup photo strip: up to three photos share a fixed row; a single
+     photo takes the full width. A pulsing placeholder while loading. */
+  .popimg { display: flex; gap: 4px; margin-top: .4rem; width: 276px; }
+  .popimg:empty:not(.loading) { display: none; }
   .popimg img {
-    width: 210px; max-height: 130px; object-fit: cover; display: block;
-    border-radius: 8px; margin-top: .4rem;
+    flex: 1; min-width: 0; height: 88px; object-fit: cover; display: block;
+    border-radius: 8px;
   }
+  .popimg.loading {
+    min-height: 88px; border-radius: 8px;
+    background: var(--accent-soft); animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { opacity: .4; } }
 </style>
 </head>
 <body>
@@ -344,40 +353,57 @@ async function doLogin() {
 // (the wikivoyage banner, else the wikipedia lead image); POIs without a page
 // fall back to the nearest Commons photo by coordinate. No keys, no backend
 // involvement: only a title or a coordinate ever leaves the browser.
-const thumbCache = new Map();
+const photoCache = new Map();
 
-async function wikiThumb(title, geo) {
-  const key = title || (geo ? `${geo.lat},${geo.lon}` : null);
-  if (!key) return null;
-  if (thumbCache.has(key)) return thumbCache.get(key);
-  const promise = (async () => {
-    for (const host of ["de.wikivoyage.org", "de.wikipedia.org"]) {
-      if (!title) break;
-      try {
-        const u = `https://${host}/w/api.php?action=query&format=json&origin=*`
-          + `&redirects=1&prop=pageimages&piprop=thumbnail&pithumbsize=480`
-          + `&titles=${encodeURIComponent(title)}`;
-        const d = await (await fetch(u)).json();
+async function wikiPhotos(title, geo, want = 3) {
+  const key = `${title || ""}|${geo ? geo.lat + "," + geo.lon : ""}|${want}`;
+  if (photoCache.has(key)) return photoCache.get(key);
+
+  const pageImage = host => title
+    ? fetch(`https://${host}/w/api.php?action=query&format=json&origin=*`
+        + `&redirects=1&prop=pageimages&piprop=thumbnail&pithumbsize=480`
+        + `&titles=${encodeURIComponent(title)}`)
+      .then(r => r.json())
+      .then(d => {
         const page = Object.values((d.query || {}).pages || {})[0];
-        if (page && page.thumbnail) return page.thumbnail.source;
-      } catch {}
+        return page && page.thumbnail ? [page.thumbnail.source] : [];
+      }).catch(() => [])
+    : Promise.resolve([]);
+
+  const commonsNearby = geo
+    ? fetch(`https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*`
+        + `&generator=geosearch&ggscoord=${geo.lat}%7C${geo.lon}&ggsradius=500`
+        + `&ggslimit=${want}&ggsnamespace=6&prop=imageinfo&iiprop=url&iiurlwidth=480`)
+      .then(r => r.json())
+      .then(d => Object.values((d.query || {}).pages || {})
+        .filter(p => p.imageinfo && p.imageinfo[0])
+        .map(p => p.imageinfo[0].thumburl || p.imageinfo[0].url))
+      .catch(() => [])
+    : Promise.resolve([]);
+
+  // All three sources race in parallel; results keep the priority order
+  // (page image first, nearby Commons photos fill the rest), deduped by
+  // file name so the same Commons file via two projects counts once.
+  const promise = Promise.all([
+    pageImage("de.wikivoyage.org"), pageImage("de.wikipedia.org"), commonsNearby,
+  ]).then(lists => {
+    const seen = new Set();
+    const out = [];
+    for (const url of lists.flat()) {
+      const name = url.split("/").pop().replace(/^\d+px-/, "");
+      if (seen.has(name)) continue;
+      seen.add(name);
+      out.push(url);
+      if (out.length >= want) break;
     }
-    if (geo) {
-      try {
-        const u = `https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*`
-          + `&generator=geosearch&ggscoord=${geo.lat}%7C${geo.lon}&ggsradius=300`
-          + `&ggslimit=1&ggsnamespace=6&prop=imageinfo&iiprop=url&iiurlwidth=480`;
-        const d = await (await fetch(u)).json();
-        const page = Object.values((d.query || {}).pages || {})[0];
-        const info = page && page.imageinfo && page.imageinfo[0];
-        if (info) return info.thumburl || info.url;
-      } catch {}
-    }
-    return null;
-  })();
-  thumbCache.set(key, promise);
+    return out;
+  });
+  photoCache.set(key, promise);
   return promise;
 }
+
+// Single-photo convenience for card thumbnails and the plan strip.
+const wikiThumb = (title, geo) => wikiPhotos(title, geo, 1).then(a => a[0] || null);
 
 // Hovering a pin opens its popup (and thereby lazy-loads its photo); click
 // still works. Leaflet closes the previous popup when the next one opens.
@@ -413,18 +439,21 @@ function ensureMap() {
       const box = e.popup.getElement().querySelector(".popimg");
       if (!box || box.dataset.done) return;
       box.dataset.done = "1";
+      box.classList.add("loading");
       const geo = box.dataset.lat
         ? { lat: +box.dataset.lat, lon: +box.dataset.lon } : null;
-      wikiThumb(box.dataset.title || null, geo).then(src => {
-        if (!src) return;
-        const img = new Image();
-        img.alt = "";
-        img.src = src;
+      wikiPhotos(box.dataset.title || null, geo, 3).then(urls => {
+        box.classList.remove("loading");
         // Just append — never popup.update(): Leaflet re-renders string
-        // content from scratch on update, which would wipe this very image
-        // (and the done flag) right after it loads. The CSS fixes the image
-        // size, so the popup grows without re-measuring.
-        box.appendChild(img);
+        // content from scratch on update, which would wipe these images
+        // (and the done flag) right after they load. The CSS fixes the
+        // strip size, so the popup grows without re-measuring.
+        urls.forEach(src => {
+          const img = new Image();
+          img.alt = "";
+          img.src = src;
+          box.appendChild(img);
+        });
       });
     });
     map.on("click", e => {
