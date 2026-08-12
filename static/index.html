@@ -201,9 +201,11 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   /* Popup photo strip: up to three photos share a fixed row; a single
-     photo takes the full width. A pulsing placeholder while loading. */
+     photo takes the full width. The strip claims its width from the start
+     so Leaflet measures the bubble around it — photos arrive async, and a
+     bubble measured text-wide would overflow. Pulsing placeholder while
+     loading; zero photos just collapse to zero height. */
   .popimg { display: flex; gap: 4px; margin-top: .4rem; width: 276px; }
-  .popimg:empty:not(.loading) { display: none; }
   .popimg img {
     flex: 1; min-width: 0; height: 88px; object-fit: cover; display: block;
     border-radius: 8px;
