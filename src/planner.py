@@ -317,9 +317,10 @@ def leg_durations(origin: str, stops: list[dict], mode: str) -> list[dict]:
         return list(pool.map(lambda h: _one_leg(h[0], h[1], mode), hops))
 
 
-def _point_to_segment_km(p: dict, a: dict, b: dict) -> float:
-    """Approximate distance from point p to segment a-b, in km, using a local
-    equirectangular projection (fine at country scale)."""
+def _point_to_segment(p: dict, a: dict, b: dict) -> tuple[float, float]:
+    """(distance_km, t) from point p to segment a-b: t in [0,1] is where the
+    nearest point sits along the segment. Local equirectangular projection
+    (fine at country scale)."""
     import math as _m
 
     lat0 = _m.radians((a["lat"] + b["lat"]) / 2)
@@ -331,21 +332,36 @@ def _point_to_segment_km(p: dict, a: dict, b: dict) -> float:
     dx, dy = bx - ax, by - ay
     seg2 = dx * dx + dy * dy
     if seg2 == 0:
-        return _m.hypot(px - ax, py - ay)
+        return _m.hypot(px - ax, py - ay), 0.0
     t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / seg2))
     cx, cy = ax + t * dx, ay + t * dy
-    return _m.hypot(px - cx, py - cy)
+    return _m.hypot(px - cx, py - cy), t
+
+
+def _point_to_segment_km(p: dict, a: dict, b: dict) -> float:
+    return _point_to_segment(p, a, b)[0]
 
 
 def _min_dist_to_route(geo: dict, line: list[list[float]]) -> float:
     """Shortest distance from a point to a route polyline (list of [lon,lat])."""
+    return _route_metrics(geo, line)[0]
+
+
+def _route_metrics(geo: dict, line: list[list[float]]) -> tuple[float, float]:
+    """(detour_km, position_km): how far a point strays from the polyline AND
+    how far along the route its nearest point sits — the driving order."""
     p = {"lat": geo["lat"], "lon": geo["lon"]}
-    best = float("inf")
+    best_d, best_pos = float("inf"), 0.0
+    cum = 0.0
     for i in range(len(line) - 1):
         a = {"lon": line[i][0], "lat": line[i][1]}
         b = {"lon": line[i + 1][0], "lat": line[i + 1][1]}
-        best = min(best, _point_to_segment_km(p, a, b))
-    return best
+        seg_km = _haversine_km(a, b)
+        d, t = _point_to_segment(p, a, b)
+        if d < best_d:
+            best_d, best_pos = d, cum + t * seg_km
+        cum += seg_km
+    return best_d, best_pos
 
 
 def along_route(from_place: str, to_place: str, interests: list[str],
@@ -369,6 +385,11 @@ def along_route(from_place: str, to_place: str, interests: list[str],
     span_km = _haversine_km(frm, to)
     geo = {"lat": mid["lat"], "lon": mid["lon"], "radius_km": span_km / 2 + corridor_km}
 
+    # A stop AT the origin or destination is not "along the way": exclude a
+    # zone around both endpoints (Berlin's own districts must not fill the
+    # list for a trip TO Berlin), scaled to the route but bounded.
+    endpoint_km = max(10.0, min(25.0, span_km * 0.1))
+
     by_file: dict[str, dict] = {}
     for like in interests or ["景点"]:
         heading = _heading_for(like)
@@ -377,26 +398,33 @@ def along_route(from_place: str, to_place: str, interests: list[str],
         for h in hits:
             if not h.geo:
                 continue
-            detour = _min_dist_to_route(h.geo, line)
+            if (_haversine_km(h.geo, frm) < endpoint_km
+                    or _haversine_km(h.geo, to) < endpoint_km):
+                continue
+            detour, pos_km = _route_metrics(h.geo, line)
             if detour > corridor_km:
                 continue
             prev = by_file.get(h.file)
             if prev is None or detour < prev["detour_km"]:
                 by_file[h.file] = {
                     "file": h.file, "heading": h.heading, "geo": h.geo,
-                    "detour_km": round(detour, 1), "text": h.text[:200],
-                    "interest": like,
+                    "detour_km": round(detour, 1), "pos_km": round(pos_km, 1),
+                    "text": h.text[:200], "interest": like,
                 }
+    # Detour decides WHICH stops make the cut; driving order decides how
+    # they are presented — the list reads A to B, not nearest-first.
     stops = sorted(by_file.values(), key=lambda c: c["detour_km"])[:top_n]
+    stops.sort(key=lambda c: c["pos_km"])
     return {"from": frm, "to": to, "geometry": geom,
             "corridor_km": corridor_km, "stops": stops}
 
 
 _ALONG_ANSWER_SYSTEM = (
     "You answer a question about stops along a driving route. Use ONLY the "
-    "listed stops. Answer in the language of the question, in one short "
-    "paragraph: name each worthwhile stop, what it offers, and how far it "
-    "strays from the route (the +km detour). Do not invent stops."
+    "listed stops, which are given in driving order from origin to "
+    "destination — keep that order. Answer in the language of the question, "
+    "in one short paragraph: name each worthwhile stop, what it offers, and "
+    "how far it strays from the route (the +km detour). Do not invent stops."
 )
 
 

@@ -216,3 +216,30 @@ def test_synth_input_zero_duration_is_unknown():
                   "legs": [{"duration_min": 0}]}]
     text = planner._build_synth_input(constraints, day_plans)
     assert "? from previous" in text
+
+
+def test_along_route_presents_stops_in_driving_order(monkeypatch):
+    monkeypatch.setattr(planner, "route", _fake_car_route)
+    # LateSmall detours least but sits near the END of the route; EarlyBig
+    # strays more but comes first when driving. Selection is by detour,
+    # presentation is by position along the route.
+    monkeypatch.setattr(planner, "hybrid_search", lambda like, **k: [
+        _hit("LateSmall.md", 51.03, 8.6),
+        _hit("EarlyBig.md", 51.08, 7.4),
+    ])
+    out = planner.along_route("Essen", "Kassel", ["城堡"], corridor_km=25)
+    assert [s["file"] for s in out["stops"]] == ["EarlyBig.md", "LateSmall.md"]
+    assert out["stops"][0]["pos_km"] < out["stops"][1]["pos_km"]
+
+
+def test_along_route_excludes_endpoint_neighbourhoods(monkeypatch):
+    monkeypatch.setattr(planner, "route", _fake_car_route)
+    # Both endpoints of the fake route sit at lat 51 (lon 7 and lon 9);
+    # stops basically AT the origin or destination are not "along the way".
+    monkeypatch.setattr(planner, "hybrid_search", lambda like, **k: [
+        _hit("AtOrigin.md", 51.01, 7.03),
+        _hit("AtDestination.md", 51.01, 8.95),
+        _hit("Midway.md", 51.05, 8.0),
+    ])
+    out = planner.along_route("Essen", "Kassel", ["城堡"], corridor_km=25)
+    assert [s["file"] for s in out["stops"]] == ["Midway.md"]
