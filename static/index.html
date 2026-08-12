@@ -415,6 +415,12 @@ const gmapsLink = (lat, lon) =>
   `<a class="gmap" target="_blank" rel="noopener" `
   + `href="https://www.google.com/maps?q=${lat},${lon}">Maps ↗</a>`;
 
+// Popup body for a named place (origin/destination markers included):
+// name, Maps link, and the lazy photo strip.
+const placePopup = (label, name, lat, lon) =>
+  `<b>${esc(label ? label + ": " : "")}${esc(name)}</b> · ${gmapsLink(lat, lon)}`
+  + `<div class="popimg" data-title="${esc(name)}" data-lat="${lat}" data-lon="${lon}"></div>`;
+
 // ---- Map ----
 let map = null, poiLayer = null, geoLayer = null, routeLayer = null, reachLayer = null;
 let geoFilter = null, picking = false;
@@ -730,9 +736,12 @@ function renderAlongResult(d, container) {
   ensureMap();
   routeLayer.clearLayers();
   poiLayer.clearLayers();
-  const a = L.marker([d.from.lat, d.from.lon]).bindPopup("From: " + esc(d.from.name));
-  const b = L.marker([d.to.lat, d.to.lon]).bindPopup("To: " + esc(d.to.name));
+  const a = L.marker([d.from.lat, d.from.lon])
+    .bindPopup(placePopup("From", d.from.name, d.from.lat, d.from.lon));
+  const b = L.marker([d.to.lat, d.to.lon])
+    .bindPopup(placePopup("To", d.to.name, d.to.lat, d.to.lon));
   a.addTo(routeLayer); b.addTo(routeLayer);
+  hoverPopup(a); hoverPopup(b);
   if (d.geometry) {
     L.geoJSON(d.geometry, { style: { color: "#2563eb", weight: 4 } }).addTo(routeLayer);
   }
@@ -769,9 +778,12 @@ function renderRouteResult(d, container) {
   ensureMap();
   routeLayer.clearLayers();
   poiLayer.clearLayers();
-  const a = L.marker([d.from.lat, d.from.lon]).bindPopup(esc(d.from.name));
-  const b = L.marker([d.to.lat, d.to.lon]).bindPopup(esc(d.to.name));
+  const a = L.marker([d.from.lat, d.from.lon])
+    .bindPopup(placePopup("", d.from.name, d.from.lat, d.from.lon));
+  const b = L.marker([d.to.lat, d.to.lon])
+    .bindPopup(placePopup("", d.to.name, d.to.lat, d.to.lon));
   a.addTo(routeLayer); b.addTo(routeLayer);
+  hoverPopup(a); hoverPopup(b);
   if (d.geometry) {
     L.geoJSON(d.geometry, { style: { color: "#2563eb", weight: 4 } }).addTo(routeLayer);
   } else {
@@ -1070,7 +1082,9 @@ function renderPlanRoute(origin, stops) {
   poiLayer.clearLayers();
   const all = [];
   if (origin) {
-    L.marker([origin.lat, origin.lon]).bindPopup("From: " + esc(origin.name)).addTo(routeLayer);
+    hoverPopup(L.marker([origin.lat, origin.lon])
+      .bindPopup(placePopup("From", origin.name, origin.lat, origin.lon))
+      .addTo(routeLayer));
     all.push([origin.lat, origin.lon]);
   }
   // Group stops by day; each day gets its own colour and its own line from

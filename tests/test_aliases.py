@@ -1,5 +1,7 @@
 """Transliteration alias expansion for retrieval."""
 
+import pytest
+
 from src.aliases import expand_query
 
 
@@ -33,6 +35,7 @@ def test_region_alias():
 def test_geocode_resolves_transliterations(monkeypatch):
     # "科隆" must geocode exactly like "Köln": the alias table bridges the
     # Chinese spelling into the German gazetteer.
+    pytest.importorskip("httpx", reason="routing pulls in the http stack")
     import src.routing as routing
     monkeypatch.setattr(routing, "_gazetteer", lambda: {
         "Köln": {"lat": 50.94, "lon": 6.96},
